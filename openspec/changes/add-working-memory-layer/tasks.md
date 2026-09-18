@@ -1,0 +1,52 @@
+## 1. Project scaffold
+
+- [ ] 1.1 Create `pyproject.toml` (package `wcm`, `requires-python >= 3.14`, runtime dependency `pyyaml`, dev dependency `pytest`, console script `wcm = wcm.cli:main`), `src/wcm/__init__.py` and `src/wcm/__main__.py`; verify `py -3.14 -m pip install -e .[dev]` succeeds and both `wcm --help` and `py -3.14 -m wcm --help` print the subcommand list
+- [ ] 1.2 Create `tests/conftest.py` with fixtures for a temporary store (`WCM_HOME` pointing at `tmp_path`), an injectable fixed clock, and a `run(argv, stdin=...)` helper that calls `wcm.cli.main` and captures stdout, stderr and exit code; verify `py -3.14 -m pytest` collects and a smoke test calling `run(["now"])` passes
+
+## 2. Store and model (memory-store)
+
+- [ ] 2.1 Implement `clock.py` (local time with UTC offset, injectable) and store root resolution in `store.py` (`WCM_HOME` override, `~/.wcm` default, directories created on first write); verify tests for default root, override root, and that nothing is written under the current directory
+- [ ] 2.2 Implement `model.py`: state, priority and type enums, `Initiative` dataclass, NOW block parse and render (five labels, canonical order, all labels always rendered, continuation lines), and invariant checks; verify unit tests for parse/render round trip, empty fields, labels in non-canonical order, and each invariant
+- [ ] 2.3 Implement `store.load`/`store.save` splitting frontmatter, NOW block and tail, preserving unknown frontmatter keys and the tail verbatim, writing via temp file plus `os.replace`; verify tests that a hand-added key and a `## Notes` section survive a rewrite and that no `.tmp` file remains after save
+- [ ] 2.4 Implement initiative discovery and IDs in `store.py`: scan `initiatives/` and `done/`, normalise `INIT-0007`/`init-0007`/`7`, look up by frontmatter id regardless of slug, derive the next ID (empty store, highest in `done/`, gaps), generate slugs with the `initiative` fallback; verify tests for each scenario in the memory-store spec
+- [ ] 2.5 Implement malformed-file handling: unparsable frontmatter, missing `id`/`status`, or unknown state are collected as warnings by listing commands and cause targeting commands to exit 1 naming the file, never rewriting it; verify tests for `now` with one broken file and `resume` of that file
+
+## 3. Lifecycle commands (initiative-lifecycle)
+
+- [ ] 3.1 Build the `argparse` tree in `cli.py` for `new`, `now`, `capture`, `inbox`, `promote`, `pause`, `resume`, `list`, `show`, `wait`, `done`, `checkpoint`, `edit` with exit codes 0/1/2 and errors on stderr; verify `wcm <cmd> --help` works for all 13 commands and an unknown command exits 2
+- [ ] 3.2 Implement the shared `_pause_flow(initiative, trigger)` (field updates, Next-required refusal before any write, checkpoint, timestamps) and the `pause` command including nothing-to-pause (exit 1), re-pausing a paused initiative, and clearing `waiting_on`; verify tests using `-n/-s/-i` flags for every scenario under "Pause is a switch to nothing"
+- [ ] 3.3 Implement `_switch(target)` and `resume`: refuse when more than one active exists on disk (naming files), pause the current active with trigger `switch`, activate the target, clear `waiting_on`, no-op when already active, refuse `done` with the reopen hint, list candidates when no ID is given, unknown ID error; verify tests for each scenario under "Switch is the primitive" and "At most one active initiative"
+- [ ] 3.4 Implement `new` with `--type`, `--priority`, `--path`, `--tags`, `--focus`, `--why`, `--paused`/`--next`, activating through `_switch` by default; verify tests for first initiative active, creating while another is active, and `--paused` without `--next` refused
+- [ ] 3.5 Implement `wait` with `--on` (required, non-empty) and `--owner` (default `me`), running `_pause_flow` with trigger `wait` when the target is active; verify tests for the active-to-waiting scenario and the empty `--on` refusal
+- [ ] 3.6 Implement `done`: `closed` timestamp, checkpoint with trigger `done`, directory move to `done/`, refusal when already done; verify tests for closing the active and a paused initiative and that the moved directory keeps its checkpoints
+- [ ] 3.7 Implement `list` (non-done by default, `--all`, sort by state, priority, recency) and `show` (frontmatter summary, NOW block, checkpoint count and latest path); verify tests for hiding done and for `show` of the active initiative with two checkpoints
+- [ ] 3.8 Implement `edit` with editor resolution (`VISUAL`, `EDITOR`, `notepad`), waiting for exit, then re-validating and printing warnings; verify a test that sets `EDITOR` to a small Python script which removes the `status` line and asserts the warning and exit 1
+- [ ] 3.9 Implement optional-ID resolution to the active initiative for `pause`, `wait`, `done`, `show`, `edit`, `checkpoint`, failing with a `wcm list` hint when nothing is active; verify tests for `show` and `done` with no active initiative
+
+## 4. Context capture (initiative-context)
+
+- [ ] 4.1 Implement `prompt.py`: interactive only when stdin is a TTY and no field flag was given; prompts for Next action, Stopped at, Important with the previous value in brackets; Enter keeps, text replaces, lone `-` clears, `-` on Next refused; non-TTY keeps previous values and fails when Next would be empty; verify tests that monkeypatch `input` and `isatty` for every scenario under the two pause-flow requirements
+- [ ] 4.2 Implement `checkpoint.py`: file name `YYYY-MM-DDTHHMMSS.md` with `-2`, `-3` suffixes on collision, template with heading, `Author: human`, `Trigger:`, six sections filled from NOW as specified; implement the `checkpoint` command with `--edit`; verify tests for the pause checkpoint contents, same-second collision, and that an earlier checkpoint is byte-for-byte unchanged after a manual checkpoint
+- [ ] 4.3 Implement the resume brief (ID, title, `paused Nd ago` or waiting line, non-empty NOW fields in order, `Path:` line) and the NOW-over-15-lines warning shared by `now` and `show`; verify tests for the two-day brief, skipped empty fields, and the long-NOW warning
+
+## 5. Working set view (working-set-view)
+
+- [ ] 5.1 Implement age humanisation (`Nm`, `Nh Mm`, `Nd`, `Nw`, `?` for missing timestamps) and width-aware truncation with `…` in `render.py`; verify unit tests at each bucket boundary and for a 300-character Next at 80 columns
+- [ ] 5.2 Implement `now` sections ACTIVE/PAUSED/WAITING (omitted when empty), two lines per initiative, priority shown only when not normal, `on:` line for waiting, ordering by priority then recency, `INBOX  N captures` line, and the empty-store line; verify tests for the typical working set, empty store, nothing active, and priority-before-recency ordering
+- [ ] 5.3 Implement the `!` warning lines (more than one active, paused/waiting without Next, waiting without what, NOW too long, unparsable file, missing path) with exit 0 and no writes; verify tests for the missing-path and two-active scenarios and that the store's mtimes are unchanged after `now`
+
+## 6. Inbox (inbox-capture)
+
+- [ ] 6.1 Implement `inbox.py` (line format, append with atomic write, parse, non-matching lines preserved) and CAP ID derivation over `inbox.md` plus the `capture` frontmatter field of all initiatives; implement `capture` joining remaining args and rejecting empty text; verify tests that a capture does not change the active initiative's file, that empty text exits 1, and that a promoted ID is not reused
+- [ ] 6.2 Implement `inbox` listing (oldest first, ID, age, text, empty message) and `promote` (`--title`, `--type`, `--priority`, `--path`, `--tags`, `--resume`, `capture:` frontmatter, Next set to the capture text, line removed, other lines preserved verbatim, unknown ID leaves the file unchanged); verify tests for every scenario in the inbox-capture spec
+
+## 7. Shell integration (shell-integration)
+
+- [ ] 7.1 Implement `shell.py`: when `WCM_CD_FILE` is set and a command leaves active an initiative whose `path` exists, write the path as one UTF-8 line; warn on a missing directory; write nothing otherwise; wire into `resume`, `new`, `promote --resume`; verify tests for the four protocol scenarios using a temp file
+- [ ] 7.2 Write `shell/wcm.psm1` per design D9 (resolve the `wcm` application at import, fall back to `py -3.14 -m wcm`, temp file in `WCM_CD_FILE`, streams attached to the console, `Set-Location` when the file names an existing directory, cleanup, `$LASTEXITCODE` forwarded, actionable error when no CLI is found); verify in a fresh Windows PowerShell 5.1 session that `resume` changes location, `pause` prompts accept input, an unknown ID leaves location unchanged with non-zero `$LASTEXITCODE`, and the temp file is removed
+
+## 8. End-to-end, performance and documentation
+
+- [ ] 8.1 Add an end-to-end test running the Phase 1 exit sequence through `cli.main` (A active, pause A, B active, pause B, C critical, done C, resume A, pause A, resume B) and asserting after each step: at most one active, every paused has Next, checkpoint counts and triggers, C under `done/`; verify it passes with the full suite via `py -3.14 -m pytest`
+- [ ] 8.2 Seed a temporary store with 20 initiatives and measure `wcm now` with `Measure-Command`; verify the median of five runs is under 300 ms and record the figure in `README.md`, or apply the lazy-import mitigation from design D2 and re-measure
+- [ ] 8.3 Write `README.md`: install steps, the `Import-Module` profile line, command reference, storage layout and file format, hand-editing rules (what the tool preserves, what it warns about), `EDITOR="code --wait"` advice, and how to reopen a done initiative by hand; verify by following it in a fresh shell from clone to a working `wcm now`
