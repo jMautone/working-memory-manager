@@ -40,7 +40,7 @@ inbox.md                       (one capture per line)
 - **THEN** the directory `initiatives/INIT-0007-payment-retries/` no longer exists and `done/INIT-0007-payment-retries/initiative.md` exists with all of its checkpoints
 
 ### Requirement: Initiative file format
-Each `initiative.md` SHALL consist of a YAML frontmatter block delimited by `---` lines followed by a Markdown body that begins with a `# NOW` heading. The frontmatter SHALL contain at least: `id`, `title`, `type`, `status`, `priority`, `created`, `updated`, `last_resumed`, `last_paused`, `waiting_on`, `tags`, `path`, `links`. Timestamps SHALL be ISO 8601 with a UTC offset. Absent values SHALL be written as `null`.
+Each `initiative.md` SHALL consist of a YAML frontmatter block delimited by `---` lines followed by a Markdown body that begins with a `# NOW` heading. The frontmatter SHALL contain at least: `id`, `title`, `type`, `status`, `priority`, `created`, `updated`, `last_resumed`, `last_paused`, `waiting_on`, `tags`, `path`, `links`. Two further fields are conditional: `closed` SHALL be present on a `done` initiative, and `capture` SHALL be present on an initiative created by `wcm promote`, holding the originating `CAP-<NNNN>` ID. Timestamps SHALL be ISO 8601 with a UTC offset. Absent values SHALL be written as `null`.
 
 #### Scenario: Frontmatter written on creation
 - **WHEN** the user runs `wcm new "Payment retries" --type feature --priority high --path C:\wt\payment-retries`
@@ -49,6 +49,17 @@ Each `initiative.md` SHALL consist of a YAML frontmatter block delimited by `---
 #### Scenario: Body starts with NOW
 - **WHEN** an initiative file is written by any command
 - **THEN** the first non-blank line after the closing `---` is `# NOW`
+
+### Requirement: The updated timestamp tracks writes
+The system SHALL set `updated` to the current time whenever it rewrites an `initiative.md`, and SHALL NOT touch it otherwise. Read-only commands (`now`, `list`, `show`, `inbox`) and commands acting on a different initiative SHALL leave it unchanged. `created` SHALL never change after creation.
+
+#### Scenario: Pause refreshes updated
+- **WHEN** `INIT-0007` is paused with `wcm pause -n "Finish backoff"`
+- **THEN** its `updated` timestamp is now and its `created` timestamp is unchanged
+
+#### Scenario: Reading does not touch updated
+- **WHEN** the user runs `wcm show INIT-0007` and then `wcm now`
+- **THEN** `INIT-0007`'s `updated` timestamp is unchanged
 
 ### Requirement: Hand edits survive rewrites
 When the system rewrites an `initiative.md`, it SHALL preserve frontmatter keys it does not know and SHALL preserve all body content that follows the NOW block. Only the known frontmatter fields and the NOW block are regenerated.

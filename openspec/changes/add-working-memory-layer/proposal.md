@@ -41,6 +41,17 @@ answers to that test define the scope of later phases, not this document.
   out of scope.
 - Interactive prompts pre-fill with the previous value and Enter keeps it.
   `wcm pause -n "<next>"` skips prompts entirely.
+- On `new`, `--next` always sets the next action of the initiative being
+  created; the one being switched away from is fed by `--pause-next`. One
+  flag, one recipient.
+- The plan's `milestone` checkpoint trigger is dropped in favour of `wait`
+  and `done`, so every trigger names the command that produced it.
+- `list` hides done initiatives unless `--all`. The plan's "archived after N
+  days" nuance is not implemented: the `done/` directory already separates
+  them, and a second threshold would be state without a use.
+- No `config.yaml` is created in Phase 1. Nothing is configurable yet and
+  `WCM_HOME` covers the only variation; it arrives with the Phase 2
+  sensitive-repo list.
 - Timestamps are local time with UTC offset (ISO 8601), matching the plan's
   examples.
 

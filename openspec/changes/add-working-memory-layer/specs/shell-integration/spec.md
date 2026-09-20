@@ -43,7 +43,7 @@ The repository SHALL ship a PowerShell module `shell/wcm.psm1` exporting a funct
 - **THEN** the temporary file named by `WCM_CD_FILE` no longer exists
 
 ### Requirement: Wrapper locates the CLI
-The module SHALL invoke the installed `wcm` console script when one is found on `PATH`, and otherwise `python -m wcm`. If neither can be started it SHALL print an actionable error mentioning `pip install` and exit non-zero without changing location.
+The module SHALL invoke the installed `wcm` console script when one is found on `PATH`, and otherwise `py -3.14 -m wcm`. It SHALL NOT invoke a bare `python`, which on the target machine resolves to the Microsoft Store alias rather than the installed interpreter. If neither can be started it SHALL print an actionable error mentioning `pip install` and exit non-zero without changing location.
 
 #### Scenario: CLI not installed
 - **WHEN** the module is imported on a machine where the package is not installed

@@ -19,15 +19,15 @@ The system SHALL never leave more than one initiative in `active` state as a res
 - **THEN** the command exits non-zero, names both files, and all three initiatives are unchanged
 
 ### Requirement: Create an initiative
-`wcm new "<title>"` SHALL create an initiative with the given title and make it active, performing the switch flow on any previously active initiative first. Options: `--type` (feature | bug | incident | research | refactor | other; default `other`), `--priority` (critical | high | normal | low; default `normal`), `--path <dir>`, `--tags a,b`, `--focus "<text>"`, `--why "<text>"`. With `--paused`, the initiative SHALL be created in `paused` state without touching the current active one; `--paused` REQUIRES `--next "<text>"`. The command SHALL print the new ID and its state.
+`wcm new "<title>"` SHALL create an initiative with the given title and make it active, performing the switch flow on any previously active initiative first. Options: `--type` (feature | bug | incident | research | refactor | other; default `other`), `--priority` (critical | high | normal | low; default `normal`), `--path <dir>`, `--tags a,b`, `--focus "<text>"`, `--why "<text>"`, `--next "<text>"`, `--pause-next "<text>"`. `--next` SHALL set the `Next` field of the initiative being created and SHALL NEVER be applied to the one being paused; `--pause-next` SHALL feed the pause flow of the previously active initiative so a switch needs no prompt. With `--paused`, the initiative SHALL be created in `paused` state without touching the current active one; `--paused` REQUIRES `--next "<text>"`. The command SHALL print the new ID and its state.
 
 #### Scenario: First initiative becomes active
 - **WHEN** no initiative is active and the user runs `wcm new "Payment retries"`
 - **THEN** `INIT-0007` is created with `status: active`, `last_resumed` set to now, and the output contains `INIT-0007 active`
 
 #### Scenario: Creating while another is active switches
-- **WHEN** `INIT-0007` is active and the user runs `wcm new "Login incident" --type incident --priority critical -n "Reproduce the lockout race"`
-- **THEN** `INIT-0007` goes through the pause flow with `-n` applied to it, becomes `paused`, and `INIT-0008` becomes `active`
+- **WHEN** `INIT-0007` is active and the user runs `wcm new "Login incident" --type incident --priority critical --next "Reproduce the lockout race" --pause-next "Finish PaymentRetryPolicy"`
+- **THEN** `INIT-0007` becomes `paused` with `Next: Finish PaymentRetryPolicy`, `INIT-0008` becomes `active` with `Next: Reproduce the lockout race`, and no prompt is shown
 
 #### Scenario: Paused creation needs a next action
 - **WHEN** the user runs `wcm new "Later thing" --paused` without `--next`
@@ -76,7 +76,7 @@ The system SHALL never leave more than one initiative in `active` state as a res
 - **THEN** the command explains that a next action is required, `INIT-0007` stays `active`, and no checkpoint is written
 
 ### Requirement: Wait on something
-`wcm wait [ID] --on "<what>" [--owner <name>]` SHALL set the target to `waiting` with `waiting_on: {what, owner, since}` where `owner` defaults to `me` and `since` is now. `--on` is required and SHALL be non-empty. If the target is active, the pause flow SHALL run first so the NOW block is fresh. Without an ID the target is the active initiative.
+`wcm wait [ID] --on "<what>" [--owner <name>]` SHALL set the target to `waiting` with `waiting_on: {what, owner, since}` where `owner` defaults to `me` and `since` is now. `--on` is required and SHALL be non-empty. If the target is active, the pause flow SHALL run first so the NOW block is fresh; the command SHALL accept the same `-n/--next`, `-s/--stopped-at` and `-i/--important` field flags as `pause` (see `initiative-context`). Without an ID the target is the active initiative.
 
 #### Scenario: Active initiative starts waiting
 - **WHEN** `INIT-0003` is active and the user runs `wcm wait --on "architecture approval" --owner Ana -n "Apply the review notes"`
@@ -87,7 +87,7 @@ The system SHALL never leave more than one initiative in `active` state as a res
 - **THEN** the command exits non-zero and `INIT-0003` is unchanged
 
 ### Requirement: Close an initiative
-`wcm done [ID]` SHALL set `status: done`, record a `closed` timestamp, write a final checkpoint with trigger `done`, and move the directory to `done/`. A next action is not required to close. Without an ID the target is the active initiative. Closing an initiative that is already done SHALL fail.
+`wcm done [ID]` SHALL set `status: done`, record a `closed` timestamp, write a final checkpoint with trigger `done`, and move the directory to `done/`. A next action is not required to close. Closing a `waiting` initiative SHALL keep its `waiting_on` value as the record of why the work ended there. Without an ID the target is the active initiative. Closing an initiative that is already done SHALL fail.
 
 #### Scenario: Close the active initiative
 - **WHEN** `INIT-0008` is active and the user runs `wcm done`
@@ -96,6 +96,10 @@ The system SHALL never leave more than one initiative in `active` state as a res
 #### Scenario: Close a paused initiative
 - **WHEN** `INIT-0005` is paused and `INIT-0007` is active and the user runs `wcm done INIT-0005`
 - **THEN** `INIT-0005` is under `done/` and `INIT-0007` is still active
+
+#### Scenario: Close a waiting initiative
+- **WHEN** `INIT-0003` is waiting on `architecture approval` and the user runs `wcm done INIT-0003`
+- **THEN** `INIT-0003` is under `done/` with `status: done` and a `closed` timestamp, and its `waiting_on.what` still reads `architecture approval`
 
 ### Requirement: Invariants hold after every transition
 After any command completes, the store SHALL satisfy: at most one `active`; every `paused` initiative has a non-empty `Next`; every `waiting` initiative has a non-empty `waiting_on.what`. A command whose result would violate an invariant SHALL refuse before writing. Violations introduced by hand edits SHALL be reported as warnings by `wcm now` and `wcm list`, never repaired automatically.

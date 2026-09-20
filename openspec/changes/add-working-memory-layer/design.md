@@ -83,7 +83,7 @@ Every write of `initiative.md` or `inbox.md` goes to `<file>.tmp` in the same di
 
 ### D7. Switch is one code path
 
-`cli.py` has a single `_switch(target)` helper used by `resume`, `new`, and `promote --resume`: it validates the single-active invariant on disk, runs `_pause_flow(current_active, trigger="switch")` if applicable, then activates the target. `pause` calls `_pause_flow(target, trigger="pause")` and stops. `wait` calls `_pause_flow(target, trigger="wait")` and then sets `waiting_on`. `done` writes a checkpoint with trigger `done` without prompts. One flow, four triggers, no duplicated invariant logic.
+`cli.py` has a single `_switch(target)` helper used by `resume`, `new`, and `promote --resume`: it validates the single-active invariant on disk, runs `_pause_flow(current_active, trigger="switch")` if applicable, then activates the target. `pause` calls `_pause_flow(target, trigger="pause")` and stops. `wait` calls `_pause_flow(target, trigger="wait")` and then sets `waiting_on`. `done` writes a checkpoint with trigger `done` without prompts. One flow, five triggers, no duplicated invariant logic. Field flags reaching `_pause_flow` always belong to the initiative being paused: `new` passes `--pause-next` there and keeps `--next` for the initiative it creates, so no flag has two possible recipients.
 
 ### D8. CD protocol through a file named by `WCM_CD_FILE`, not a stdout directive
 
