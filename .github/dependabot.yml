@@ -1,0 +1,10 @@
+version: 2
+updates:
+  # Add the "pip" ecosystem in the pull request that creates pyproject.toml:
+  # without a manifest, Dependabot fails its update job.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore(ci)"

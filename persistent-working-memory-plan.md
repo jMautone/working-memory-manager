@@ -539,6 +539,27 @@ Cuanto tomo recuperar mentalmente cada tarea?
 
 Esas respuestas definen el alcance de F2 y F3, no este documento.
 
+### Versiones
+
+Cada fase sale como un minor, y cada change mergeado como una pre-release de ese minor (`v0.1.0-alpha.N`). El detalle está en [`docs/decisions/0001-versionado-y-releases.md`](docs/decisions/0001-versionado-y-releases.md).
+
+| Fase | Versión |
+|---|---|
+| F1 SWITCH | `0.1.0` |
+| F2 GROUND | `0.2.0` |
+| F3 DELEGATE | `0.3.0` |
+| F4 ATTEND | `1.0.0` |
+
+Una fase no está cerrada hasta que: pasa su test de salida, los tests pasan en la matrix de 3 OSes y las specs están sincronizadas a `openspec/specs/`. Recién ahí se abre `release/vX.Y.0`.
+
+### F1, desglosado en changes
+
+F2 en adelante se desglosa cuando le toca: lo define el test de salida de la fase anterior.
+
+| Change | Rama | Entrega |
+|---|---|---|
+| `add-working-memory-layer` | `v0.1/add-working-memory-layer` | Los comandos de Fase 1, el store en `~/.wcm`, el wrapper de PowerShell. |
+
 ---
 
 ## 15. Stack
