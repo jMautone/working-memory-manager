@@ -1,32 +1,114 @@
 schema: spec-driven
 
-# Project context (optional)
-# This is shown to AI when creating artifacts.
-# Add your tech stack, conventions, style guides, domain knowledge, etc.
-# Example:
-#   context: |
-#     Tech stack: TypeScript, React, Node.js
-#     We use conventional commits
-#     Domain: e-commerce platform
+context: |
+  # Producto
 
-# Per-artifact rules (optional)
-# Add custom rules for specific artifacts.
-# Example:
-#   rules:
-#     proposal:
-#       - Keep proposals under 500 words
-#       - Always include a "Non-goals" section
-#     tasks:
-#       - Break tasks into chunks of max 2 hours
+  `wcm` (Working Memory Layer) recuerda donde quedo cada iniciativa para que la
+  persona pueda dejar de hacerlo. Su promesa: interrumpir cualquier iniciativa,
+  sacarla de la memoria de corto plazo y retomarla horas, dias o semanas despues
+  en menos de 30 segundos, sin releer conversaciones. Tres operaciones son el
+  nucleo: `pause` (soltar), `now` (ver) y `resume` (retomar); todo lo demas
+  existe para hacerlas mas baratas o mas confiables.
 
-# Per-operation guidance (optional)
-# Add advisory guidance for how apply and archive work should be conducted.
-# This is separate from artifact rules above.
-# Example:
-#   operations:
-#     apply:
-#       guidance:
-#         - Keep test summaries concise
-#     archive:
-#       guidance:
-#         - Summarize the archive outcome before finishing
+  El plan completo esta en `persistent-working-memory-plan.md`, que es la fuente
+  de verdad del alcance y del orden de ejecucion (fases F1..F4, §14). Cada fase
+  tiene un test de salida, y sus respuestas definen el alcance de la siguiente.
+
+  # Principios de producto (no negociables)
+
+  - **La memoria humana no es el sistema de almacenamiento.** Si despues de
+    pausar hay que recordar algo, el pause fue insuficiente.
+  - **La iniciativa esta por encima del repositorio.** El almacenamiento vive
+    fuera de cualquier repo (`~/.wcm`, o `WCM_HOME`).
+  - **Las sesiones son descartables.** Borrar una sesion de agente no impide
+    continuar.
+  - **Git es evidencia, no memoria de trabajo.** WCM responde que se intentaba,
+    por que, donde quedo y que sigue.
+  - **Estado actual antes que historial.** `resume` carga el estado actual; el
+    historial (checkpoints append-only) se consulta solo para investigar.
+  - **Markdown y YAML como almacenamiento.** Legible, editable a mano y
+    reconstruible sin la herramienta. Sin indices generados, sin contadores,
+    sin estado oculto.
+  - **Utilizable sin LLM.** Todo lo que un agente puede escribir, una persona
+    tambien. El agente es un acelerador, no una dependencia.
+  - **Advertir, no corregir en silencio.** Los estados ambiguos se muestran, no
+    se arreglan solos.
+
+  Invariantes (plan §17): a lo sumo una iniciativa active; toda paused tiene
+  Next no vacio; toda waiting tiene `waiting_on.what` no vacio; NOW es chico;
+  los checkpoints nunca se reescriben.
+
+  # Plataformas
+
+  Windows es **de primera clase**: es la maquina de uso diario, con Windows
+  PowerShell 5.1 (sin `&&`, sin ternario) y Python 3.14 via el launcher `py`.
+  macOS y Linux mantienen el nucleo portable y corren en CI. Toda decision que
+  difiera entre OS debe ser explicita: separadores de ruta, editor por defecto,
+  shell del wrapper.
+
+  # Stack y convenciones
+
+  - Python 3.14, `argparse` de la biblioteca estandar. Dependencias de runtime al
+    minimo (hoy, solo una libreria de YAML); cada una se registra en el design
+    del change antes de agregarse.
+  - El `wcm` que el usuario tipea es una **funcion de PowerShell** que envuelve
+    a la CLI, porque un proceso hijo no puede cambiar el directorio de su shell
+    padre. El protocolo (`WCM_CD_FILE`) es agnostico del shell.
+  - Exit codes documentados y estables; son parte del contrato publico, igual
+    que el formato de los archivos de `~/.wcm`.
+  - Sin red, sin base de datos, sin LLM en el nucleo.
+  - **Idioma**: codigo, comentarios, salida al usuario, help, `README.md`,
+    `CONTRIBUTING.md` y `CHANGELOG.md` en INGLES. El plan y los documentos de
+    decision en `docs/decisions/` estan en espanol, que es el idioma de trabajo
+    del autor.
+  - **Idioma de OpenSpec**: `proposal.md`, `design.md` y `tasks.md` en espanol;
+    las specs (delta y `openspec/specs/`) en INGLES, porque son el contrato
+    publico que queda en el repo. Los artifacts de `add-working-memory-layer`
+    son anteriores a esta regla y quedan en ingles.
+  - **Flujo de un change**: rama `vX.Y/<change>` -> propose -> aprobacion del
+    autor -> apply -> PR -> archive en el mismo PR -> squash merge. El detalle
+    esta en `CONTRIBUTING.md`, seccion "Working on an OpenSpec change".
+
+  # Tests
+
+  pytest, end to end a traves de la CLI contra un store temporal (`WCM_HOME` en
+  un directorio temporal), con el reloj inyectable. La matrix de CI corre en
+  windows-latest, macos-latest y ubuntu-latest. El wrapper de PowerShell se
+  verifica a mano en una sesion nueva de Windows PowerShell 5.1.
+
+rules:
+  proposal:
+    - 'Planteá el problema en términos del flujo de trabajo del usuario (soltar, ver, retomar), no de la implementación.'
+    - 'Enumerá explícitamente los comandos, flags, variables de entorno y campos de archivo que el cambio AGREGA, MODIFICA y QUITA. Si no cambia ninguno, decilo.'
+    - 'Incluí una sección "Non-goals" y una sección "Fase" que ubique el cambio en el mapa F1..F4 de persistent-working-memory-plan.md §14.'
+    - 'Declará si el cambio afecta el comportamiento en un OS y no en otro.'
+    - 'En la sección "Fase", nombrá la rama del change: vX.Y/<nombre-del-change>, donde X.Y es el minor de la fase (tabla en docs/decisions/0001-versionado-y-releases.md).'
+  design:
+    - 'Acá sí se nombran Python, librerías, módulos y estructura de paquetes: es el lugar para hacerlo.'
+    - 'Identificá qué parte es decisión pura (testeable sin filesystem ni reloj real) y qué parte es efecto, y dónde va el borde.'
+    - 'Si el diseño difiere entre Windows y macOS/Linux, mostrá las dos formas, no solo una.'
+    - 'Registrá las alternativas descartadas con el motivo, en una línea cada una.'
+  specs:
+    - 'AGNÓSTICAS DE LENGUAJE. Una spec no menciona Python, ni un tipo, ni una firma de función, ni una librería. Si no se puede implementar en otro lenguaje leyéndola, está mal escrita.'
+    - 'Todo requirement es observable desde la CLI: entrada (comando, flags, estado del store) hacia salida (stdout, stderr, exit code, efecto en el filesystem).'
+    - 'Los escenarios que difieren por OS se escriben por separado y nombran el OS.'
+    - 'Especificá el caso de error y el exit code, no solo el camino feliz.'
+  tasks:
+    - 'Cada tarea incluye su test. Una tarea sin test no está terminada.'
+    - 'Ninguna tarea deja main sin pasar ruff ni con tests rojos.'
+    - 'Marcá con [manual] las tareas que requieren verificación a mano (por ejemplo, en Windows PowerShell 5.1) y no se pueden cerrar solo con CI.'
+    - 'La última tarea integra el change: suma sus líneas bajo [Unreleased] en CHANGELOG.md y abre el PR con el título <type>(<change>): <summary> [vX.Y.0-alpha.N] (ver CONTRIBUTING.md).'
+    - 'El archive no es una tarea: se hace después de la última, en el mismo PR, porque exige todas las tareas tildadas.'
+    - 'El test de salida de una fase no es una tarea de un change: es la definición de "listo" de la fase y se hace antes de release/vX.Y.0.'
+
+operations:
+  apply:
+    guidance:
+      - 'Corré ruff y los tests en Windows antes de cerrar una tarea, y dejá anotado lo que quedó pendiente de verificar a mano.'
+      - 'No agregues dependencias nuevas sin registrarlo en el design del cambio.'
+  archive:
+    guidance:
+      - 'Archivá en la rama del change, con el PR abierto, todas las tareas tildadas y el CI en verde, antes del merge: el archive viaja en el mismo PR.'
+      - 'Sincronizá siempre las specs; nunca archives sin sincronizar.'
+      - 'Confirmá que la spec sincronizada describe lo que el código hace hoy, no lo que se pensaba hacer.'
+      - 'Después del archive corré openspec validate --all --strict y commiteá en la misma rama.'

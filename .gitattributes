@@ -1,0 +1,9 @@
+# LF in the repository and in the checkout, on every platform.
+# Without this, git on Windows (core.autocrlf=true) converts to CRLF and
+# `ruff format --check` flags every .py file.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.whl binary
+*.gz binary
