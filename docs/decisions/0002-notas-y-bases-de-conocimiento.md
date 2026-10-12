@@ -21,7 +21,7 @@ La base de conocimiento sigue el patrón "LLM Wiki" que Andrej Karpathy publicó
 - tres operaciones: *ingest*, *query* y *lint*;
 - un `index.md` (catálogo) y un `log.md` (cronológico, solo se agrega);
 - Obsidian como lector;
-- sin embeddings: según el autor del patrón, funciona bien hasta unas ~100 fuentes y algunos cientos de páginas.
+- sin embeddings: según el autor del patrón, el `index.md` alcanza para navegar a escala moderada (~100 fuentes, algunos cientos de páginas), sin infraestructura de RAG.
 
 Nada está implementado todavía: el único change está propuesto, sin aprobar y sin código. Cambiar el formato de los archivos ahora es barato; después del primer release es un breaking change.
 
@@ -31,16 +31,16 @@ Nada está implementado todavía: el único change está propuesto, sin aprobar 
 
 1. **WCM tiene dos ejes.** El primero es la memoria de trabajo: soltar, ver y retomar iniciativas. El segundo es el conocimiento: guardar y encontrar notas, que con el tiempo forman bases de conocimiento. El norte de §2 sigue siendo el del primer eje y el núcleo se construye primero. El segundo eje extiende el principio "la memoria humana no es el sistema de almacenamiento" de lo que estaba haciendo a lo que aprendí.
 
-2. **Una captura no es una nota.** Una captura es algo que pide acción: entra al inbox y se procesa. Puede promoverse a iniciativa, convertirse en nota (`wcm promote <CAP> --note`) o descartarse (`wcm drop <CAP>`). Al descartarla, la línea pasa a `inbox-dropped.md`, que también se escanea para derivar IDs, así un ID nunca se reutiliza. Una nota es algo para recordar y no pide nada: el inbox tiende a cero, las notas se acumulan.
+2. **Una captura no es una nota.** Una captura es algo que pide acción: entra al inbox y se procesa. Puede promoverse a iniciativa, convertirse en nota (`wcm promote <CAP> --note`, siempre en `work`, así su ID sigue a la vista de la derivación) o descartarse (`wcm drop <CAP>`). Al descartarla, la línea pasa a `inbox-dropped.md`, que también se escanea para derivar IDs, así un ID nunca se reutiliza. Una nota es algo para recordar y no pide nada: el inbox tiende a cero, las notas se acumulan.
 
 ### Notas
 
-3. **Una nota es un archivo.** `notes/NOTE-0012.md`: frontmatter con `id`, `title`, `tags`, `initiative`, `created` y `updated`, un H1 con el título y un cuerpo Markdown libre. Solo `id` y `title` son obligatorios.
+3. **Una nota es un archivo.** `notes/NOTE-0012.md`: frontmatter con `id`, `title`, `tags`, `initiative`, `capture`, `created` y `updated`, un H1 con el título y un cuerpo Markdown libre. Solo `id` y `title` son obligatorios.
 
 4. **Crear una nota no abre nada.** `wcm note "<texto>"` guarda la nota con el texto como título, en menos de 5 segundos.
    - `-e` abre el editor para escribir el cuerpo en el momento; `wcm note edit <ID>` lo completa después.
    - `-t` suma tags; se repite o acepta comas.
-   - Sin texto y en una terminal, la CLI pide una línea y la lee ella misma. Pasar el texto como argumento en Windows PowerShell 5.1 tiene dos problemas: un texto con `#`, `;`, `$` o comillas se pierde sin aviso, y por pipe los acentos llegan como `?`.
+   - Sin texto y en una terminal, `wcm note` y `wcm capture` piden una línea y la leen ellos mismos; sin terminal y sin texto, fallan. En Windows PowerShell 5.1 el texto como argumento es frágil: sin comillas, un `#` al comienzo de una palabra corta el resto y `;` lo parte en otro comando; entre comillas dobles, `$algo` se expande y las comillas internas no llegan a la CLI. Por pipe, los acentos llegan como `?`.
 
 5. **La nota se vincula sola a la iniciativa activa.** Si hay una activa y la nota va a la KB `work`, su frontmatter guarda `initiative: "[[INIT-0007]]"`, y la salida lo dice. `--free` la deja suelta. `wcm resume` y `wcm show` muestran cuántas notas tiene la iniciativa y la última.
 
@@ -73,7 +73,7 @@ Nada está implementado todavía: el único change está propuesto, sin aprobar 
 
 10. **Las iniciativas, el inbox y los checkpoints viven en la KB `work`.** Son su materia prima: la wiki de trabajo los lee. Las otras KBs tienen solo notas y su capa de agentes. `wcm note` escribe en la KB por defecto (`work`, salvo que `config.yaml` diga otra) o en la que indique `-k <kb>`. Solo las notas de `work` se vinculan a la iniciativa activa, porque los links no cruzan vaults.
 
-11. **El nombre del archivo es el ID.** `notes/NOTE-0012.md` e `initiatives/INIT-0007/INIT-0007.md`, con `checkpoints/` al lado. El título vive en el frontmatter y no hay slug. El motivo es que Obsidian no resuelve un link a un alias del frontmatter (`[[NOTE-0012]]` apuntando a `NOTE-0012-timeouts-del-gateway.md`); solo resuelve `[[archivo|alias]]`. Con el ID como nombre, el link corto `[[NOTE-0012]]` resuelve sin ayuda, cambiar un título no rompe nada, y "el ID es la identidad" pasa a ser literal.
+11. **El nombre del archivo es el ID.** `notes/NOTE-0012.md` e `initiatives/INIT-0007/INIT-0007.md`, con `checkpoints/` al lado. El título vive en el frontmatter y en un H1, en notas e iniciativas: la iniciativa empieza con `# <título>` y su bloque pasa a `## NOW`. No hay slug. El motivo es que Obsidian no resuelve un link a un alias del frontmatter (`[[NOTE-0012]]` apuntando a `NOTE-0012-timeouts-del-gateway.md`); solo resuelve `[[archivo|alias]]`. Con el ID como nombre, el link corto `[[NOTE-0012]]` resuelve sin ayuda, cambiar un título no rompe nada, y "el ID es la identidad" pasa a ser literal.
 
 12. **Los IDs de notas son por KB.** `NOTE-0012` puede existir en `work` y en `reading`; la CLI resuelve contra la KB por defecto o la de `-k`. `INIT` y `CAP` existen solo en `work`. Derivar `max + 1` asume que una sola máquina escribe cada KB. La sincronización sigue en "DESPUÉS" y, cuando llegue, va a obligar a revisar este punto.
 
@@ -82,8 +82,9 @@ Nada está implementado todavía: el único change está propuesto, sin aprobar 
 ### Agentes
 
 14. **Las notas son de la persona; la wiki es de los agentes.**
-    - Un agente lee `notes/`, `raw/`, las iniciativas y los checkpoints, y nunca los reescribe.
-    - Escribe solo en `wiki/`, y además en `checkpoints/` por el contrato de §11.
+    - Un agente lee `notes/`, `raw/`, las iniciativas, los checkpoints y el `AGENTS.md`, y nunca los reescribe.
+    - Escribe solo en `wiki/`, y además agrega checkpoints por el contrato de §11.
+    - El `AGENTS.md` lo genera WCM y lo ajusta la persona. En el patrón original lo co-escriben la persona y el LLM; acá no, para que la división de autoría sea simple.
     - WCM nunca lee `wiki/` para funcionar, así que sigue siendo utilizable sin LLM.
     - `wiki/index.md` es un índice generado, pero pertenece a los agentes, no al store. El principio "sin índices generados" se aplica a lo que WCM necesita para funcionar.
 
@@ -91,7 +92,7 @@ Nada está implementado todavía: el único change está propuesto, sin aprobar 
 
 ### F1
 
-16. **F1 se corta en cinco changes y empieza por el núcleo.** Cada change publica su alpha. El test de salida de F1 arranca con la primera y mide lo mismo que antes: time-to-pause y time-to-resume.
+16. **F1 se corta en cinco changes y empieza por el núcleo.** Cada change publica su alpha. El uso real y el simulacro de F1 arrancan con la primera alpha. El test de salida se cierra después de la última, antes de `release/v0.1.0` (ADR 0001), y sigue midiendo time-to-pause y time-to-resume. El uso puede reordenar los changes 2 a 5, pero el cambio de orden se hace primero en la tabla de §14, en un PR `docs/`.
 
     | Orden | Change | Entrega |
     |---|---|---|
@@ -103,16 +104,28 @@ Nada está implementado todavía: el único change está propuesto, sin aprobar 
 
 17. **`workspaces` mínimo desde F1.** La iniciativa guarda `workspaces: [{path, primary: true}]` en lugar de un `path` único. `resume` aterriza en el `path` del primary. F2 suma `repo`, `root` y `branch` a cada entrada sin romper el formato.
 
-18. **Una alerta de atención se adelanta a F1.** `wcm now` avisa cuando la iniciativa activa lleva más de N horas sin checkpoint. El riesgo de abandono más probable es cambiar de tarea sin avisarle a WCM: la activa queda vieja y un pause con "Enter, Enter, Enter" confirma un estado que ya no es real. N se fija en el design del change.
+18. **Una alerta de atención se adelanta a F1.** `wcm now` avisa cuando la iniciativa activa lleva más de N horas sin checkpoint, contadas desde lo más reciente entre su `last_resumed` y su último checkpoint. Hasta que exista `wcm checkpoint` (change 5), el aviso sugiere `wcm pause`. El riesgo de abandono más probable es cambiar de tarea sin avisarle a WCM: la activa queda vieja y un pause con "Enter, Enter, Enter" confirma un estado que ya no es real. N se fija en el design del change.
 
 19. **`wcm resume` sin ID retoma la activa.** Si hay una iniciativa activa, `wcm resume` sin ID vuelve a mostrar su brief y lleva a su carpeta, sin escribir un checkpoint.
 
 ## Consecuencias
 
-- El plan cambia en este mismo PR: §1, §2, §3, §4, §5, §6, §7, §8, §9, §11, §12, §13, §14, §16, §17, §18, §19, §20, §21 y §23. Los números de sección no cambian, porque `openspec/config.yaml`, `CONTRIBUTING.md` y la ADR 0001 los citan.
-- El change `add-working-memory-layer` se achica al núcleo (change 1) y cambia de layout: hub, `kbs/work`, nombre de archivo igual al ID y `workspaces`. Sus specs de inbox, `wait`, `list`, `show`, `checkpoint` y `edit` pasan a los changes 3 y 5. Se hace con `/opsx:update` en `v0.1/add-working-memory-layer`, junto con los arreglos que pide el paso 4 de la transición de la ADR 0001. Recién después se aprueba y se aplica.
-- Los changes 2 a 5 se proponen de a uno, cuando se mergea el anterior. Lo que muestre el uso real puede reordenarlos.
-- El `context` de `openspec/config.yaml` describe solo las tres operaciones. Hay que sumarle las notas y las KBs antes de proponer `add-notes`.
+- El plan cambia en este mismo PR: §1 a §9, §11 a §21 y §23. Los números de sección no cambian, porque `openspec/config.yaml`, `CONTRIBUTING.md` y la ADR 0001 los citan. §15 alinea además el boceto del wrapper con el protocolo `WCM_CD_FILE` que ya fijaba el design del change.
+- El change `add-working-memory-layer` se achica al núcleo (change 1). Después de mergear este PR, en `v0.1/add-working-memory-layer` creada desde `main`, `/opsx:update` lo alinea con esta ADR:
+  - el layout: hub, `kbs/work`, nombre de archivo igual al ID sin slug (se reescriben los requirements de identidad y de derivación de IDs de `memory-store`), y título en frontmatter y H1 con `## NOW`;
+  - `workspaces: [{path, primary: true}]` en lugar de `path`;
+  - `resume` sin ID con una activa (decisión 19), la alerta de `now` (decisión 18) y los IDs cortos (decisión 7);
+  - se quitan la capacidad de inbox, los requirements de `wait`, `list`, `show`, `checkpoint` y `edit`, y en `now` la sección WAITING y la línea INBOX. No se crean todavía los otros changes: lo quitado queda en la historia de git como punto de partida;
+  - el proposal suma las secciones Fase (con la rama) y Non-goals que pide `openspec/config.yaml`;
+  - los arreglos de `tasks.md` que pide el paso 4 de la transición de la ADR 0001.
+
+  Después el autor aprueba los artifacts, recién ahí corre `/opsx:apply`, y el archive va en el mismo PR.
+- Los changes 2 a 5 se proponen de a uno, cuando se mergea el anterior. Cada uno retoma lo que se quitó del change 1 y toca lo que el núcleo ya tiene (la tabla de §14 dice qué).
+- `openspec/config.yaml` se alimenta en cada artifact y hoy contradice este modelo. Antes del `/opsx:update` del change 1, en un PR `docs/`, hay que:
+  - sumar el segundo eje al `context`;
+  - reformular "el almacenamiento vive fuera de cualquier repo" (una KB registrada puede ser un repo propio) y "sin índices generados" (`wiki/index.md` es de los agentes);
+  - sumar los principios y los invariantes nuevos de §3 y §17;
+  - ampliar "el formato de los archivos de `~/.wcm`" a "del hub y de las KBs", también en `CONTRIBUTING.md` y en la regla del `!` de la ADR 0001, para que un cambio de formato en una KB externa también cuente como breaking.
 - `config.yaml` llega en F1, con el change 4, no en F2 como suponía el change.
 - Si una KB se escribe desde dos máquinas, los IDs pueden chocar. Queda como riesgo en §20 hasta que llegue el sync.
 
