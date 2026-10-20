@@ -15,3 +15,14 @@ a pre-release of it; see [CONTRIBUTING.md](CONTRIBUTING.md).
 - OpenSpec project context and per-artifact rules.
 - Release pipeline: every merged change publishes a GitHub pre-release with
   the sdist and the wheel of `wcm`, plus `checksums.txt`.
+- `wcm`, the core of Phase 1: `new`, `now`, `pause`, `resume` and `done`.
+  `pause` asks for the next action with the previous value prefilled and
+  writes an append-only checkpoint; `resume` switches in one command and
+  prints where you stopped; `now` shows the working set from any directory
+  and warns about an active initiative left more than 4 hours without a
+  checkpoint.
+- Plain-text store in `~/.wcm/kbs/work` (`WCM_HOME` overrides the hub): one
+  Markdown file per initiative, named by its ID, editable by hand and
+  openable as an Obsidian vault.
+- `shell/wcm.psm1`: a PowerShell module whose `wcm` function lets `resume`
+  and `new` change the shell's directory through `WCM_CD_FILE`.
