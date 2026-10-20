@@ -10,6 +10,17 @@ context: |
   nucleo: `pause` (soltar), `now` (ver) y `resume` (retomar); todo lo demas
   existe para hacerlas mas baratas o mas confiables.
 
+  Un segundo eje es el conocimiento: notas que se guardan en segundos
+  (`wcm note`, guardar) y se vuelven a encontrar (`wcm notes`, encontrar). Viven
+  en bases de conocimiento (KB) que se abren en Obsidian como vaults; desde F3,
+  agentes mantienen una wiki encima (patron "LLM Wiki" de Karpathy). El nucleo
+  se construye primero. Las decisiones estan en
+  `docs/decisions/0002-notas-y-bases-de-conocimiento.md`.
+
+  Layout: `~/.wcm` (o `WCM_HOME`) es un hub con `config.yaml` y `kbs/<kb>/`; el
+  hub no es un vault. La KB `work` tiene ademas las iniciativas, el inbox y los
+  checkpoints. Una KB puede registrarse en otra ruta.
+
   El plan completo esta en `persistent-working-memory-plan.md`, que es la fuente
   de verdad del alcance y del orden de ejecucion (fases F1..F4, §14). Cada fase
   tiene un test de salida, y sus respuestas definen el alcance de la siguiente.
@@ -18,8 +29,10 @@ context: |
 
   - **La memoria humana no es el sistema de almacenamiento.** Si despues de
     pausar hay que recordar algo, el pause fue insuficiente.
-  - **La iniciativa esta por encima del repositorio.** El almacenamiento vive
-    fuera de cualquier repo (`~/.wcm`, o `WCM_HOME`).
+  - **La iniciativa esta por encima del repositorio.** El almacenamiento
+    principal vive fuera de cualquier repo: el hub (`~/.wcm`, o `WCM_HOME`) y la
+    KB `work`. Una KB registrada puede vivir en otra ruta, incluso en un repo
+    propio, pero nunca en el repo de codigo de una iniciativa.
   - **Las sesiones son descartables.** Borrar una sesion de agente no impide
     continuar.
   - **Git es evidencia, no memoria de trabajo.** WCM responde que se intentaba,
@@ -28,15 +41,25 @@ context: |
     historial (checkpoints append-only) se consulta solo para investigar.
   - **Markdown y YAML como almacenamiento.** Legible, editable a mano y
     reconstruible sin la herramienta. Sin indices generados, sin contadores,
-    sin estado oculto.
+    sin estado oculto en lo que WCM necesita para funcionar; el `wiki/index.md`
+    de una KB es de los agentes y WCM nunca lo lee.
   - **Utilizable sin LLM.** Todo lo que un agente puede escribir, una persona
     tambien. El agente es un acelerador, no una dependencia.
   - **Advertir, no corregir en silencio.** Los estados ambiguos se muestran, no
     se arreglan solos.
+  - **Las notas son de la persona; la wiki es de los agentes.** Un agente lee
+    notas, fuentes, iniciativas, checkpoints y `AGENTS.md`, y solo escribe en
+    `wiki/` y checkpoints nuevos por contrato. WCM genera el `AGENTS.md` y la
+    persona lo ajusta. WCM nunca necesita la wiki para funcionar.
+  - **El ID es el nombre del archivo.** `NOTE-0012.md`, `INIT-0007/INIT-0007.md`;
+    el titulo vive en el frontmatter y en el H1. Los links se escriben `[[ID]]`.
 
   Invariantes (plan §17): a lo sumo una iniciativa active; toda paused tiene
   Next no vacio; toda waiting tiene `waiting_on.what` no vacio; NOW es chico;
-  los checkpoints nunca se reescriben.
+  los checkpoints nunca se reescriben; un agente nunca reescribe notas,
+  fuentes ni iniciativas; WCM funciona sin la wiki de ninguna KB; el nombre del
+  archivo de una iniciativa o una nota es su ID; una nota pertenece a una sola
+  KB.
 
   # Plataformas
 
@@ -55,7 +78,8 @@ context: |
     a la CLI, porque un proceso hijo no puede cambiar el directorio de su shell
     padre. El protocolo (`WCM_CD_FILE`) es agnostico del shell.
   - Exit codes documentados y estables; son parte del contrato publico, igual
-    que el formato de los archivos de `~/.wcm`.
+    que el formato de los archivos del hub (`~/.wcm`) y de las KBs, tambien las
+    registradas fuera del hub.
   - Sin red, sin base de datos, sin LLM en el nucleo.
   - **Idioma**: codigo, comentarios, salida al usuario, help, `README.md`,
     `CONTRIBUTING.md` y `CHANGELOG.md` en INGLES. El plan y los documentos de
@@ -78,7 +102,7 @@ context: |
 
 rules:
   proposal:
-    - 'Planteá el problema en términos del flujo de trabajo del usuario (soltar, ver, retomar), no de la implementación.'
+    - 'Planteá el problema en términos del flujo de trabajo del usuario (soltar, ver, retomar; guardar, encontrar), no de la implementación.'
     - 'Enumerá explícitamente los comandos, flags, variables de entorno y campos de archivo que el cambio AGREGA, MODIFICA y QUITA. Si no cambia ninguno, decilo.'
     - 'Incluí una sección "Non-goals" y una sección "Fase" que ubique el cambio en el mapa F1..F4 de persistent-working-memory-plan.md §14.'
     - 'Declará si el cambio afecta el comportamiento en un OS y no en otro.'
