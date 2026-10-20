@@ -62,7 +62,9 @@ The title becomes the commit on `main`, so it follows
 - **summary**: imperative, starts in lowercase, no final period. The title
   without the version suffix is at most 72 characters.
 - **`!`**: the change breaks the public contract (exit codes, commands or
-  flags, the `WCM_CD_FILE` protocol, the format of the files in `~/.wcm`).
+  flags, the `WCM_CD_FILE` protocol, the format of the files in the hub,
+  `~/.wcm`, and in every knowledge base, including those registered outside
+  the hub).
 - **`[<version>]`**: the exact version the merge publishes. The release
   workflow tags whatever this says, so the suffix is required on branches
   that publish and forbidden on the rest.

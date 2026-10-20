@@ -108,6 +108,14 @@ Nada está implementado todavía: el único change está propuesto, sin aprobar 
 
 19. **`wcm resume` sin ID retoma la activa.** Si hay una iniciativa activa, `wcm resume` sin ID vuelve a mostrar su brief y lleva a su carpeta, sin escribir un checkpoint.
 
+### Tests de salida, métricas y seguridad
+
+20. **El segundo eje entra en los tests de salida, las métricas y la seguridad.** Confirmado por el autor el 2026-10-20. Se habían propuesto junto con el resto, pero se mergearon antes de confirmarlos.
+    - El test de salida de F3 suma una prueba: un agente hace *ingest* de una semana de notas de `work` y responde una pregunta citando las notas.
+    - Después del test de F1 se responden dos preguntas más: qué notas se guardaron en el momento y cuáles quedaron para después, y si `wcm notes` encontró lo que se buscaba.
+    - `Time To Note`, desde que algo se le ocurre a la persona hasta "saved", tiene que ser menor a 5 s. Es métrica de §16 y criterio de éxito de §2.
+    - Seguridad (§18): separar KBs por lugar permite que el conocimiento de trabajo no salga de la máquina de trabajo, y el `AGENTS.md` de cada KB repite la regla de no guardar secretos, tokens ni contenido de archivos.
+
 ## Consecuencias
 
 - El plan cambia en este mismo PR: §1 a §9, §11 a §21 y §23. Los números de sección no cambian, porque `openspec/config.yaml`, `CONTRIBUTING.md` y la ADR 0001 los citan. §15 alinea además el boceto del wrapper con el protocolo `WCM_CD_FILE` que ya fijaba el design del change.
@@ -121,8 +129,8 @@ Nada está implementado todavía: el único change está propuesto, sin aprobar 
 
   Después el autor aprueba los artifacts, recién ahí corre `/opsx:apply`, y el archive va en el mismo PR.
 - Los changes 2 a 5 se proponen de a uno, cuando se mergea el anterior. Cada uno retoma lo que se quitó del change 1 y toca lo que el núcleo ya tiene (la tabla de §14 dice qué).
-- `openspec/config.yaml` se alimenta en cada artifact y hoy contradice este modelo. Antes del `/opsx:update` del change 1, en un PR `docs/`, hay que:
-  - sumar el segundo eje al `context`;
+- `openspec/config.yaml` se alimenta en cada artifact y contradecía este modelo. Se alineó antes del `/opsx:update` del change 1, en el PR `docs/align-openspec-config`:
+  - sumar el segundo eje y el layout al `context`;
   - reformular "el almacenamiento vive fuera de cualquier repo" (una KB registrada puede ser un repo propio) y "sin índices generados" (`wiki/index.md` es de los agentes);
   - sumar los principios y los invariantes nuevos de §3 y §17;
   - ampliar "el formato de los archivos de `~/.wcm`" a "del hub y de las KBs", también en `CONTRIBUTING.md` y en la regla del `!` de la ADR 0001, para que un cambio de formato en una KB externa también cuente como breaking.

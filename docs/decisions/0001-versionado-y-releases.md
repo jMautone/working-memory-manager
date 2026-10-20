@@ -69,7 +69,7 @@ El título del PR es el commit que queda en `main`:
 - **type**: `feat` `fix` `docs` `chore` `ci` `refactor` `test` `perf`.
 - **scope**: obligatorio, kebab-case.
 - **summary**: inglés, imperativo, empieza en minúscula, sin punto final. El título sin el sufijo de versión no pasa de 72 caracteres.
-- **`!`**: cambio que rompe el contrato público: exit codes, comandos o flags de la CLI, el protocolo `WCM_CD_FILE`, o el formato de los archivos de `~/.wcm`. Se marca en las notas; no altera la versión (el minor ya lo decide la fase).
+- **`!`**: cambio que rompe el contrato público: exit codes, comandos o flags de la CLI, el protocolo `WCM_CD_FILE`, o el formato de los archivos del hub (`~/.wcm`) y de las bases de conocimiento, también las registradas fuera del hub (ampliado por la ADR 0002). Se marca en las notas; no altera la versión (el minor ya lo decide la fase).
 - **`[<version>]`**: la versión exacta que publica el merge. **Es la fuente de verdad**: el workflow de release crea el tag que dice el título.
 
 Reglas por rama:
