@@ -233,3 +233,55 @@ def test_run_from_two_directories(run, kb, tmp_path, monkeypatch):
     repo.mkdir()
     monkeypatch.chdir(repo)
     assert run("now").out == first
+
+
+def test_paused_order_is_not_the_id_order(run, kb):
+    write_initiative(kb, "INIT-0005", last_paused=ts(timedelta(hours=1)))
+    write_initiative(kb, "INIT-0007", priority="high", last_paused=ts(timedelta(days=5)))
+    write_initiative(kb, "INIT-0003", last_paused=ts(timedelta(days=2)))
+    out = run("now").out
+    assert out.index("INIT-0007") < out.index("INIT-0005") < out.index("INIT-0003")
+
+
+def test_active_age_comes_from_last_resumed(run, kb):
+    write_initiative(
+        kb,
+        "INIT-0008",
+        status="active",
+        last_resumed=ts(timedelta(minutes=23)),
+        last_paused=ts(timedelta(days=3)),
+    )
+    line = next(line for line in run("now").out.splitlines() if "INIT-0008" in line)
+    assert line.rstrip().endswith("23m")
+
+
+def test_relative_path_is_flagged_from_any_directory(run, kb, tmp_path, monkeypatch):
+    (tmp_path / "ws").mkdir()
+    write_initiative(kb, "INIT-0001", workspaces="[{path: ws, primary: true}]")
+    monkeypatch.chdir(tmp_path)
+    here = run("now").out
+    monkeypatch.chdir(tmp_path / "ws")
+    assert run("now").out == here
+    assert "INIT-0001 workspace path is not absolute: ws" in here
+
+
+def test_home_relative_path_is_expanded(run, kb, tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    (home / "wt").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    write_initiative(kb, "INIT-0001", workspaces="[{path: ~/wt, primary: true}]")
+    assert "!" not in run("now").out
+
+
+def test_wide_characters_do_not_wrap(run, kb, monkeypatch):
+    monkeypatch.setenv("COLUMNS", "80")
+    write_initiative(kb, "INIT-0007", next_="🔥 修正する" * 40)
+    line = next(line for line in run("now").out.splitlines() if "Next:" in line)
+    assert render.display_width(line) <= 80
+    assert line.endswith("…")
+
+
+def test_truncate_with_a_plain_ellipsis():
+    assert render.truncate("x" * 20, 10, "...") == "x" * 7 + "..."
+    assert render.display_width("修正") == 4

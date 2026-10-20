@@ -37,7 +37,7 @@ The requirements themselves live in the five delta specs under `specs/`; this do
 
 ### D2. PyYAML is the only runtime dependency
 
-Frontmatter is loaded with `yaml.safe_load` and written with `yaml.safe_dump(sort_keys=False, allow_unicode=True)` so hand-added keys survive and key order stays readable. Timestamps are written as ISO 8601 strings, not YAML timestamps, so they round-trip unchanged.
+Frontmatter is loaded with a `SafeLoader` subclass whose implicit resolvers keep only null and `true`/`false`: every other plain scalar loads as text. YAML 1.1 would otherwise turn a hand-written `9:30` into 570, `0123` into 83 and `yes` into True, and write them back that way. It is written with a `SafeDumper` subclass, `sort_keys=False`, `allow_unicode=True` and no line width, so hand-added keys survive, key order stays readable and long values are never folded. Strings that look like ISO timestamps are written plain (`created: 2026-09-16T09:00:00-03:00`), as people write them and Obsidian reads them; since the loader keeps them as text, they round-trip unchanged. Any exception while loading the frontmatter, not only `YAMLError`, makes the file malformed, never a traceback. Comments and flow style in the frontmatter are not preserved; the README says so.
 
 *Alternative discarded:* a hand-rolled parser for the flat subset the tool writes; the files are hand-editable and people will write flow lists, quotes and nested maps. If `pip install` proves blocked on the target machine, vendor PyYAML under `src/wcm/_vendor/` instead (recorded as a risk).
 
@@ -82,7 +82,7 @@ The same code on every OS: paths are built with `pathlib`, so `C:\Users\<user>\.
 
 `store.load` splits the file into four parts: frontmatter mapping, title heading, NOW block and `tail` (everything after the NOW block). `store.save` regenerates the first three from the model and appends `tail` verbatim. The frontmatter mapping is kept as a dict; known keys are updated in place, unknown keys pass through.
 
-The title heading is the first `# ` line of the body and is always rendered from `title`. The NOW block starts at `## NOW` and ends at the next Markdown heading or end of file. Inside it, fields are matched by `**<Label>:**` at line start for the five labels, in any order; each value is the rest of that line. Values are single lines. Any other non-blank line inside the block is not a field: it is kept verbatim after the five labels, which are rendered back in canonical order, and it counts toward the oversized-NOW warning. Nothing a person writes there is dropped.
+The title heading is the first `# ` line before `## NOW` and is always rendered from `title`, first in the body; when the frontmatter has no `title`, that heading provides it. Titles, like NOW values, are single lines. Whatever else precedes `## NOW` is kept, after the title. A body with no `## NOW` keeps what precedes its first other heading before the generated NOW block and the rest after it, so a second rewrite changes nothing. The NOW block starts at `## NOW` and ends at the next Markdown heading or end of file. Inside it, fields are matched by `**<Label>:**` at line start for the five labels, in any order; each value is the rest of that line. Any other non-blank line inside the block is not a field: it is kept verbatim after the five labels, which are rendered back in canonical order, with one blank line wherever the person left blank lines between them, and it counts toward the oversized-NOW warning. Nothing a person writes there is dropped. Rendering adds any known frontmatter key a hand-written file lacks, with its default (`null`, `[]`, `other`, `normal`).
 
 `workspaces` is a list of mappings with `path` and `primary`; `--path` writes one primary entry with the directory made absolute. Unknown keys in an entry pass through, so F2 can add `repo`, `root` and `branch` without breaking the format.
 
@@ -90,7 +90,7 @@ The title heading is the first `# ` line of the body and is always rendered from
 
 ### D7. Atomic writes via temp file and `os.replace`
 
-Every write of an initiative file goes to `<file>.tmp` in the same directory followed by `os.replace`. `done` writes the final checkpoint and the status inside `initiatives/`, then moves the whole directory with `shutil.move`, so a failure mid-move leaves a consistent initiative in one of the two places.
+Every write of an initiative file goes to `<file>.tmp` in the same directory followed by `os.replace`. `done` checks first that `done/<ID>` does not exist, then moves the whole directory with one `os.rename`, and only then writes the final checkpoint and the status in `done/`. A refused or failed move leaves everything as it was. A plain rename, never `shutil.move`: on Windows a directory another program is using cannot be renamed, and `shutil.move` would fall back to copy-then-delete and leave half of it in each place.
 
 ### D8. IDs are scanned, not stored
 
@@ -98,7 +98,7 @@ Every write of an initiative file goes to `<file>.tmp` in the same directory fol
 
 ### D9. Switch is one code path
 
-`cli.py` has a single `_switch(target)` helper used by `resume` and `new`: it validates the single-active invariant on disk, runs `_pause_flow(current_active, trigger="switch")` if applicable, then activates the target. `pause` calls `_pause_flow(target, trigger="pause")` and stops. `done` writes a checkpoint with trigger `done` without prompts. Field flags reaching `_pause_flow` always belong to the initiative being paused: `new` passes `--pause-next` there and keeps `--next` for the initiative it creates.
+`cli.py` has one pause flow in two halves: `_pause_fields` decides the new NOW values (flags, prompts or the previous values) and writes nothing; `_apply_pause` writes the checkpoint and the file and prints `Checkpoint saved.` / `Safe to switch context.`. `pause` uses it with trigger `pause`; `resume` and `new` validate the single-active invariant on disk, run `_pause_fields` on the current active initiative before writing anything, then `_apply_pause` with trigger `switch`, then activate or create the target. `done` writes a checkpoint with trigger `done` without prompts. Field flags reaching the pause flow always belong to the initiative being paused: `new` passes `--pause-next` there and keeps `--next` for the initiative it creates. When the next action is missing and there is no prompt, the error names the flag of the running command (`-n` for `pause`, `--pause-next` for `new`, `wcm pause -n` first for `resume`).
 
 `resume` with no ID, or with the active ID, takes a separate read-only path: it renders the brief and asks `shell.py` for the directory change, without touching any file.
 
@@ -127,7 +127,12 @@ function wcm {
 }
 ```
 
-`$script:WcmExe` is resolved at import with `Get-Command wcm -CommandType Application`. The function shadows the application by PowerShell's precedence rules, which is the intended effect. `-Encoding UTF8` matters: PowerShell 5.1 reads a file without BOM as ANSI. If neither the console script nor `py` can start, the function prints an error that names `py -3.14 -m pip install` and sets a non-zero `$LASTEXITCODE`.
+The sketch above is the shape; `shell/wcm.psm1` adds four details found in review:
+
+- `wcm` is resolved with `Get-Command wcm -CommandType Application`; the function shadows the application by PowerShell's precedence rules, which is the intended effect. A found CLI is cached; a missing one is looked up again on every call, so installing it works without re-importing the module. A CLI that vanished after import (`CommandNotFoundException`) prints the install hint.
+- Arguments are rebuilt before the call: PowerShell parses `--tags a,b` as an array, and relaying it through `@args` would split it into two arguments, so arrays are joined back with commas. In legacy native-argument mode (Windows PowerShell 5.1), empty arguments and arguments with spaces or double quotes are quoted Windows-style, because 5.1 drops the former and does not escape the latter.
+- `-Encoding UTF8` matters: PowerShell 5.1 reads a file without BOM as ANSI.
+- If neither the console script nor `py -3.14` with the package can start, the function prints an error that names `py -3.14 -m pip install` and sets `$LASTEXITCODE` to 1.
 
 ### D12. Time, ages and the stale-active warning
 
@@ -137,11 +142,13 @@ The stale-active warning compares `now` with the most recent of `last_resumed` a
 
 ### D13. Interactive detection and prompt semantics
 
-`prompt.py` treats the flow as interactive only when `sys.stdin.isatty()` and no field flag was passed. It prints the ID and title of the initiative being paused, then prompts with `input()`, showing the previous value in brackets; Enter keeps, text replaces, a lone `-` clears. Tests drive the flow by monkeypatching `input` and `isatty`. Refusal to pause when `Next` is empty is checked once, after the prompts, before any file is touched.
+`prompt.py` treats the flow as interactive only when `sys.stdin.isatty()` and no field flag was passed. It prints the ID and title of the initiative being paused, then prompts with `input()`, showing the previous value in brackets; Enter keeps, text replaces, a lone `-` clears. Tests drive the flow by monkeypatching `input` and `isatty`. A lone `-` at the `Next action` prompt is refused right away; an empty `Next` is refused after the prompts. Both happen before any file is touched.
 
 ### D14. File encoding
 
 Every file of the store is written as UTF-8 without BOM, with `\n` line endings on every OS, so the same store reads the same on Windows, in Obsidian and in Git.
+
+Console output differs by OS. On Windows, Python encodes redirected output in the ANSI code page, while PowerShell decodes it with the console's code page; when stdout is not a terminal, the CLI re-encodes it with `GetConsoleOutputCP()`, so accents survive `wcm now | Select-String`. On macOS and Linux nothing changes. Errors are replaced, never raised, and when the output encoding cannot represent `…` the truncation uses `...`. Truncation counts terminal columns, not characters: wide East Asian characters and most emoji take two.
 
 ## Risks / Trade-offs
 

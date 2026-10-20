@@ -53,10 +53,17 @@ def test_resume_with_a_missing_path(run, kb, cd_file, tmp_path):
     assert "does not exist" in result.out
 
 
+def test_only_new_and_resume_request_the_change(run, kb, cd_file, workdir):
+    run("new", "Payment retries", "--path", workdir)
+    for argv in (("pause", "-n", "x"), ("now",), ("done", "1")):
+        cd_file.write_text("", encoding="utf-8")
+        assert run(*argv).code == 0
+        assert cd_file.read_text(encoding="utf-8") == "", argv
+
+
 def test_commands_without_a_path(run, kb, cd_file):
     run("new", "Payment retries")
     run("pause", "-n", "x")
-    run("now")
     run("resume", "1")
     assert cd_file.read_text(encoding="utf-8") == ""
 

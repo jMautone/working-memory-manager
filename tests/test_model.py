@@ -155,3 +155,34 @@ def test_invariants():
     paused.meta["status"] = "active"
     paused.now["Next"] = ""
     assert model.invariant_problems(paused) == []
+
+
+def test_body_without_now_is_stable():
+    text = "---\nid: INIT-0001\nstatus: paused\ntitle: T\n---\n\n# T\n\nPara one.\n\nPara two.\n"
+    once = model.render(model.parse(text))
+    twice = model.render(model.parse(once))
+    assert once == twice
+    assert "Para one.\n\nPara two." in once
+    assert once.index("Para one.") < once.index("## NOW")
+
+
+def test_blank_lines_between_extra_now_lines_are_kept():
+    text = model.render(make(Next="n")).replace(
+        "**Next:** n", "**Next:** n\n- a bullet\n\nA loose paragraph\n\n\n\nAnother"
+    )
+    init = model.parse(text)
+    assert init.now_extra == ["- a bullet", "", "A loose paragraph", "", "Another"]
+    assert init.now_lines == 8
+    assert model.render(model.parse(model.render(init))) == model.render(init)
+
+
+def test_render_fills_missing_known_keys():
+    init = model.parse("---\nid: INIT-0001\nstatus: paused\nowner: ana\n---\n")
+    meta = model.parse(model.render(init)).meta
+    assert meta["owner"] == "ana"
+    assert (meta["type"], meta["priority"], meta["tags"], meta["workspaces"]) == (
+        "other",
+        "normal",
+        [],
+        [],
+    )

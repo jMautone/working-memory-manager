@@ -4,6 +4,7 @@ Pure: every function takes the time, the terminal width and the facts it
 needs as arguments, and returns text.
 """
 
+import unicodedata
 from datetime import datetime, timedelta
 
 from wcm.model import NOW_LABELS, NOW_LIMIT, PRIORITIES, Initiative, invariant_problems
@@ -32,10 +33,36 @@ def since(when: datetime | None, now: datetime) -> str:
     return age(now - when if when else None)
 
 
-def truncate(text: str, width: int) -> str:
+def _char_width(c: str) -> int:
+    if unicodedata.combining(c):
+        return 0
+    return 2 if unicodedata.east_asian_width(c) in ("W", "F") else 1
+
+
+def display_width(text: str) -> int:
+    """Terminal columns: wide East Asian characters and most emoji take two."""
+    return sum(_char_width(c) for c in text)
+
+
+def truncate(text: str, width: int, ellipsis: str = ELLIPSIS) -> str:
+    """Cut `text` to at most `width` terminal columns, ending with `ellipsis`."""
     if width < 1:
         return ""
-    return text if len(text) <= width else text[: width - 1] + ELLIPSIS
+    if display_width(text) <= width:
+        return text
+    room = width - display_width(ellipsis)
+    out, used = [], 0
+    for c in text:
+        w = _char_width(c)
+        if used + w > room:
+            break
+        out.append(c)
+        used += w
+    return "".join(out) + ellipsis if room >= 0 else ellipsis[:width]
+
+
+def pad(text: str, width: int) -> str:
+    return text + " " * max(0, width - display_width(text))
 
 
 def _priority_key(init: Initiative) -> int:
@@ -52,8 +79,9 @@ def working_set(
     now: datetime,
     width: int,
     latest_checkpoint: dict[str, datetime | None],
-    missing_paths: dict[str, str],
+    path_problems: dict[str, str],
     problems: list[tuple[str, str]],
+    ellipsis: str = ELLIPSIS,
 ) -> str:
     """The `wcm now` screen. `initiatives` holds the ones not done."""
     active = sorted(
@@ -66,18 +94,18 @@ def working_set(
     )
     waiting = [i for i in initiatives if i.status == "waiting"]
     listed = active + paused
-    title_width = max((len(i.title) for i in listed), default=0)
+    title_width = max((display_width(i.title) for i in listed), default=0)
     title_width = max(10, min(title_width, width - 13 - 2 - 8 - 2 - 7))
 
     def entry(init: Initiative, when: datetime | None) -> list[str]:
         priority = init.priority if init.priority != "normal" else ""
         head = (
-            f"  {init.id:<9}  {truncate(init.title, title_width):<{title_width}}  "
+            f"  {init.id:<9}  {pad(truncate(init.title, title_width, ellipsis), title_width)}  "
             f"{priority:<8}  {since(when, now)}"
         )
         return [
-            truncate(head.rstrip(), width),
-            truncate(f"{_INDENT}Next: {init.now['Next']}", width),
+            truncate(head.rstrip(), width, ellipsis),
+            truncate(f"{_INDENT}Next: {init.now['Next']}".rstrip(), width, ellipsis),
         ]
 
     lines: list[str] = []
@@ -100,7 +128,7 @@ def working_set(
         waiting,
         now=now,
         latest_checkpoint=latest_checkpoint,
-        missing_paths=missing_paths,
+        path_problems=path_problems,
         problems=problems,
     )
     # Warnings wrap rather than lose the path or the reason they name.
@@ -110,7 +138,7 @@ def working_set(
     return "\n".join(lines) + "\n"
 
 
-def _warnings(active, paused, waiting, *, now, latest_checkpoint, missing_paths, problems):
+def _warnings(active, paused, waiting, *, now, latest_checkpoint, path_problems, problems):
     out = []
     if len(active) > 1:
         out.append("More than one initiative is active: " + ", ".join(i.id for i in active))
@@ -136,8 +164,8 @@ def _warnings(active, paused, waiting, *, now, latest_checkpoint, missing_paths,
                 f"{init.id} has a NOW block of {init.now_lines} lines (limit {NOW_LIMIT}):"
                 " NOW is being used as a history"
             )
-        if init.id in missing_paths:
-            out.append(f"{init.id} workspace path does not exist: {missing_paths[init.id]}")
+        if init.id in path_problems:
+            out.append(f"{init.id} {path_problems[init.id]}")
     for path, reason in problems:
         out.append(f"Could not read {path}: {reason}")
     return out
@@ -174,7 +202,9 @@ def brief(
 
 def candidates(initiatives: list[Initiative]) -> str:
     """The list `wcm resume` shows when nothing is active and no ID was given."""
-    lines = ["Nothing is active. Resume one of these with: wcm resume <ID>", ""]
+    if not initiatives:
+        return 'Nothing is in flight. Start with: wcm new "<title>"\n'
+    lines = ["Resume one of these with: wcm resume <ID>", ""]
     for init in initiatives:
         lines.append(f"  {init.id:<9}  {init.status:<7}  {init.title}")
     return "\n".join(lines) + "\n"

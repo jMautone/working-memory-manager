@@ -24,6 +24,10 @@ class DomainError(Exception):
     pass
 
 
+class UsageError(Exception):
+    pass
+
+
 @dataclass
 class Ctx:
     store: Store
@@ -101,12 +105,42 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
-    for stream in (sys.stdout, sys.stderr):
+def _configure_streams() -> None:
+    """Write what the reader's console can decode.
+
+    On Windows, Python encodes redirected output in the ANSI code page, while
+    PowerShell decodes it with the console's code page: use the latter, so a
+    title with accents survives `wcm now | Select-String`.
+    """
+    console_cp = 0
+    if sys.platform == "win32":
         try:
-            stream.reconfigure(errors="replace")
-        except AttributeError, ValueError:
+            import ctypes
+
+            console_cp = ctypes.windll.kernel32.GetConsoleOutputCP()
+        except AttributeError, OSError:
+            console_cp = 0
+    for stream, real in ((sys.stdout, sys.__stdout__), (sys.stderr, sys.__stderr__)):
+        try:
+            # Only the process's own streams: a test harness's capture is left alone.
+            if console_cp and stream is real and not stream.isatty():
+                stream.reconfigure(encoding=f"cp{console_cp}", errors="replace")
+            else:
+                stream.reconfigure(errors="replace")
+        except AttributeError, ValueError, LookupError, OSError:
             pass
+
+
+def _ellipsis(stream) -> str:
+    try:
+        render.ELLIPSIS.encode(stream.encoding or "utf-8")
+    except UnicodeEncodeError, LookupError, AttributeError:
+        return "..."
+    return render.ELLIPSIS
+
+
+def main(argv: list[str] | None = None) -> int:
+    _configure_streams()
     parser = build_parser()
     try:
         args = parser.parse_args(argv)
@@ -119,6 +153,9 @@ def main(argv: list[str] | None = None) -> int:
     ctx = Ctx(store=Store(), now=clock.now(), out=sys.stdout, err=sys.stderr)
     try:
         return args.handler(args, ctx)
+    except UsageError as e:
+        print(f"wcm {args.command}: error: {e}", file=sys.stderr)
+        return USAGE_ERROR
     except (DomainError, NotFound, model.MalformedError, OSError) as e:
         print(f"wcm: error: {e}", file=sys.stderr)
         return DOMAIN_ERROR
@@ -154,8 +191,14 @@ def _resolve(ctx: Ctx, initiative_id: str | None) -> Entry:
     return actives[0]
 
 
-def _pause_fields(ctx: Ctx, entry: Entry, flags: dict[str, str | None]) -> dict[str, str]:
-    """Decide the new NOW values for an initiative being let go. Writes nothing."""
+def _pause_fields(
+    ctx: Ctx, entry: Entry, flags: dict[str, str | None], hint: str
+) -> dict[str, str]:
+    """Decide the new NOW values for an initiative being let go. Writes nothing.
+
+    `hint` tells the person how to give the next action without a prompt, in
+    the terms of the command that is running.
+    """
     init = entry.initiative
     values = dict(init.now)
     given = {label: value for label, value in flags.items() if value is not None}
@@ -176,8 +219,8 @@ def _pause_fields(ctx: Ctx, entry: Entry, flags: dict[str, str | None]) -> dict[
             values[label] = model.one_line(answer or "")
         ctx.say()
     if not values["Next"]:
-        hint = "" if not given and prompt.stdin_is_tty() else ' (use -n "<next action>")'
-        raise DomainError(f"a next action is required to pause {init.id}{hint}")
+        suffix = "" if not given and prompt.stdin_is_tty() else f" ({hint})"
+        raise DomainError(f"a next action is required to pause {init.id}{suffix}")
     return values
 
 
@@ -189,20 +232,36 @@ def _apply_pause(ctx: Ctx, entry: Entry, values: dict[str, str], trigger: str) -
     init.meta["waiting_on"] = None
     ctx.store.write_checkpoint(entry, ctx.now, trigger)
     ctx.store.save(entry, ctx.now)
+    ctx.say("Checkpoint saved.")
+    ctx.say("Safe to switch context.")
+
+
+def _path_problem(path: str | None) -> str | None:
+    """Why a recorded workspace path cannot be used, independent of the current directory."""
+    if not path:
+        return None
+    if not os.path.isabs(path):
+        return f"workspace path is not absolute: {path}"
+    if not os.path.isdir(path):
+        return f"workspace path does not exist: {path}"
+    return None
 
 
 def _go_to(ctx: Ctx, init: model.Initiative) -> None:
-    if not shell.request_cd(init.primary_path):
-        ctx.warn(f"{init.id} workspace path does not exist: {init.primary_path}")
+    problem = _path_problem(init.primary_path)
+    if problem:
+        ctx.warn(f"{init.id} {problem}")
+    else:
+        shell.request_cd(init.primary_path)
 
 
 # --- commands ------------------------------------------------------------------
 
 
 def cmd_new(args, ctx: Ctx) -> int:
-    title = " ".join(" ".join(args.title).split())
+    title = model.one_line(" ".join(args.title))
     if not title:
-        raise DomainError("a title is required")
+        raise UsageError("a title is required")
     next_ = model.one_line(args.next_)
     if args.paused and not next_:
         raise DomainError('a paused initiative needs a next action: add --next "<text>"')
@@ -215,8 +274,9 @@ def cmd_new(args, ctx: Ctx) -> int:
         _refuse_many_active(ctx, actives)
         if actives:
             current = actives[0]
-            flags = {"Next": args.pause_next}
-            values = _pause_fields(ctx, current, flags)
+            values = _pause_fields(
+                ctx, current, {"Next": args.pause_next}, 'use --pause-next "<next action>"'
+            )
 
     status = "paused" if args.paused else "active"
     initiative_id = ctx.store.next_id()
@@ -238,11 +298,12 @@ def cmd_new(args, ctx: Ctx) -> int:
 
     if current is not None:
         _apply_pause(ctx, current, values, "switch")
-        ctx.say(f"{current.initiative.id} paused.")
+        ctx.say()
     ctx.store.create(init)
     ctx.say(f"{initiative_id} {status}: {title}")
-    if path and not os.path.isdir(path):
-        ctx.warn(f"{initiative_id} workspace path does not exist: {path}")
+    problem = _path_problem(path)
+    if problem:
+        ctx.warn(f"{initiative_id} {problem}")
     elif status == "active":
         _go_to(ctx, init)
     return OK
@@ -259,10 +320,10 @@ def cmd_now(args, ctx: Ctx) -> int:
         for e in in_flight
         if e.initiative.status == "active"
     }
-    missing = {
-        e.initiative.id: e.initiative.primary_path
+    path_problems = {
+        e.initiative.id: problem
         for e in in_flight
-        if e.initiative.primary_path and not os.path.isdir(e.initiative.primary_path)
+        if (problem := _path_problem(e.initiative.primary_path))
     }
     width = shutil.get_terminal_size(fallback=(100, 24)).columns
     ctx.out.write(
@@ -271,8 +332,9 @@ def cmd_now(args, ctx: Ctx) -> int:
             now=ctx.now,
             width=width,
             latest_checkpoint=latest,
-            missing_paths=missing,
+            path_problems=path_problems,
             problems=[(ctx.store.relative(p.path), p.reason) for p in problems],
+            ellipsis=_ellipsis(ctx.out),
         )
     )
     return OK
@@ -286,10 +348,9 @@ def cmd_pause(args, ctx: Ctx) -> int:
         ctx,
         entry,
         {"Next": args.next_, "Stopped at": args.stopped_at, "Important": args.important},
+        'use -n "<next action>"',
     )
     _apply_pause(ctx, entry, values, "pause")
-    ctx.say("Checkpoint saved.")
-    ctx.say("Safe to switch context.")
     return OK
 
 
@@ -305,6 +366,7 @@ def cmd_resume(args, ctx: Ctx) -> int:
             for e in entries
             if e.location == "initiatives" and e.initiative.status in ("paused", "waiting")
         ]
+        print("wcm: error: no initiative is active", file=ctx.err)
         ctx.out.write(render.candidates(waiting))
         return DOMAIN_ERROR
 
@@ -338,9 +400,13 @@ def cmd_resume(args, ctx: Ctx) -> int:
     waiting_on = dict(init.waiting_on)
 
     if current is not None:
-        values = _pause_fields(ctx, current, {})
+        values = _pause_fields(
+            ctx,
+            current,
+            {},
+            f'run wcm pause -n "<next action>" first, then wcm resume {init.id}',
+        )
         _apply_pause(ctx, current, values, "switch")
-        ctx.say(f"{current.initiative.id} paused.")
         ctx.say()
 
     init.meta["status"] = "active"
@@ -365,10 +431,15 @@ def cmd_done(args, ctx: Ctx) -> int:
     init = entry.initiative
     if init.status == "done" or entry.location == "done":
         raise DomainError(f"{init.id} is already done")
+    target = ctx.store.done_directory(init.id)
+    if target.exists():
+        raise DomainError(f"{ctx.store.relative(target)} already exists; nothing was changed")
+    # Move first: a refused move leaves everything as it was. Then record the
+    # closing in the moved directory.
+    moved = ctx.store.move_to_done(entry)
     init.meta["status"] = "done"
     init.set_time("closed", ctx.now)
-    ctx.store.write_checkpoint(entry, ctx.now, "done")
-    ctx.store.save(entry, ctx.now)
-    ctx.store.move_to_done(entry)
+    ctx.store.write_checkpoint(moved, ctx.now, "done")
+    ctx.store.save(moved, ctx.now)
     ctx.say(f"{init.id} done: {init.title}")
     return OK

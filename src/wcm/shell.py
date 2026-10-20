@@ -10,10 +10,10 @@ from pathlib import Path
 
 
 def request_cd(path: str | None) -> bool:
-    """Ask the shell to move to `path`. Return False when the directory is missing."""
+    """Ask the shell to move to `path`. Return False when it is not an existing absolute directory."""
     if not path:
         return True
-    if not Path(path).is_dir():
+    if not os.path.isabs(path) or not Path(path).is_dir():
         return False
     target = os.environ.get("WCM_CD_FILE", "").strip()
     if target:

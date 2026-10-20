@@ -257,3 +257,107 @@ def test_store_relative_paths_use_forward_slashes(tmp_path):
     assert s.relative(s.kb / "initiatives" / "INIT-0001" / "INIT-0001.md") == (
         "initiatives/INIT-0001/INIT-0001.md"
     )
+
+
+# --- what a person writes by hand survives -----------------------------------------
+
+
+def test_hand_written_values_keep_their_meaning(run, kb):
+    path = write_initiative(
+        kb,
+        "INIT-0002",
+        extra_meta="standup: 9:30\nversion: 1.10\nticket: 0123\nreviewed: yes\nflag: true\n",
+    )
+    assert run("pause", "2", "-n", "again").code == 0
+    meta = load(kb, "INIT-0002").meta
+    assert meta["standup"] == "9:30"
+    assert meta["version"] == "1.10"
+    assert meta["ticket"] == "0123"
+    assert meta["reviewed"] == "yes"
+    assert meta["flag"] is True
+    text = path.read_text(encoding="utf-8")
+    assert "\ncreated: 2026-09-01T09:00:00-03:00\n" in text  # byte for byte
+
+
+def test_timestamps_are_written_plain(run, kb):
+    run("new", "Payment retries")
+    text = path_of(kb, "INIT-0001").read_text(encoding="utf-8")
+    assert "\ncreated: 2026-09-16T09:00:00-03:00\n" in text
+
+
+def test_impossible_timestamp_does_not_break_commands(run, kb):
+    write_initiative(kb, "INIT-0002", last_paused="2026-09-31T10:00:00-03:00")
+    result = run("now")
+    assert result.code == 0
+    line = next(line for line in result.out.splitlines() if "INIT-0002" in line)
+    assert line.rstrip().endswith("?")
+    assert run("new", "X", "--pause-next", "y").code == 0
+
+
+def test_bad_explicit_tag_is_reported_not_raised(run, kb):
+    write_initiative(kb, "INIT-0002", extra_meta="weird: !!int x\n")
+    result = run("now")
+    assert result.code == 0
+    assert "INIT-0002/INIT-0002.md" in result.out
+    assert "Traceback" not in result.err
+
+
+def test_long_title_is_not_folded(run, kb):
+    title = "Investigate why the payment provider returns duplicated transaction identifiers ---"
+    assert run("new", title).code == 0
+    assert load(kb, "INIT-0001").title == title
+    assert "INIT-0001" in run("now").out
+
+
+def test_missing_title_comes_from_the_heading(run, kb):
+    path = path_of(kb, "INIT-0002")
+    (path.parent / "checkpoints").mkdir(parents=True)
+    path.write_text(
+        "---\nid: INIT-0002\nstatus: paused\n---\n\n# Hand written thing\n\n"
+        "## NOW\n\n**Next:** do it\n",
+        encoding="utf-8",
+    )
+    assert "Hand written thing" in run("now").out
+    assert run("pause", "2", "-n", "x").code == 0
+    text = path.read_text(encoding="utf-8")
+    assert "\n# Hand written thing\n" in text
+    meta = load(kb, "INIT-0002").meta
+    for key in ("title", "type", "priority", "tags", "workspaces", "links", "last_resumed"):
+        assert key in meta
+
+
+def test_multi_line_title_does_not_grow_the_file(run, kb):
+    path = write_initiative(kb, "INIT-0002")
+    text = path.read_text(encoding="utf-8")
+    path.write_text(
+        text.replace("title: Hand written\n", "title: |\n  Beta\n  second line\n", 1),
+        encoding="utf-8",
+    )
+    run("pause", "2", "-n", "a")
+    first = path.read_text(encoding="utf-8")
+    run("pause", "2", "-n", "a")
+    assert path.read_text(encoding="utf-8").count("second line") == first.count("second line")
+    assert "\n# Beta second line\n" in first
+
+
+def test_banner_above_the_title_is_kept_once(run, kb):
+    path = write_initiative(kb, "INIT-0004", title="Renamed title")
+    text = path.read_text(encoding="utf-8").replace(
+        "# Renamed title", "> [!info] banner\n\n# Old title"
+    )
+    path.write_text(text, encoding="utf-8")
+    run("pause", "4", "-n", "go")
+    run("pause", "4", "-n", "go again")
+    rewritten = path.read_text(encoding="utf-8")
+    assert rewritten.count("\n# ") == 1
+    assert "> [!info] banner" in rewritten
+
+
+def test_bad_checkpoint_name_does_not_break_now(run, kb):
+    run("new", "A")
+    (kb / "initiatives" / "INIT-0001" / "checkpoints" / "2026-09-31T090000.md").write_text(
+        "x", encoding="utf-8"
+    )
+    result = run("now")
+    assert result.code == 0
+    assert "INIT-0001" in result.out

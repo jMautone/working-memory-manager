@@ -24,7 +24,10 @@ def time_of(name: str, tz) -> datetime | None:
     m = _NAME.fullmatch(name)
     if not m:
         return None
-    return datetime.strptime(m.group(1), _NAME_FORMAT).replace(tzinfo=tz)
+    try:
+        return datetime.strptime(m.group(1), _NAME_FORMAT).replace(tzinfo=tz)
+    except ValueError:  # a name with an impossible date, made by hand
+        return None
 
 
 def is_checkpoint(name: str) -> bool:

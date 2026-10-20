@@ -27,18 +27,34 @@ py -3.14 -m pip install .\working-memory-manager
 ```
 
 Then add the PowerShell module to your profile, so `wcm resume` can change
-your shell's directory (a child process cannot do it on its own):
+your shell's directory (a child process cannot do it on its own). A fresh
+Windows account has no profile yet, and runs no scripts until you allow it:
 
 ```powershell
-Add-Content $PROFILE 'Import-Module <path to working-memory-manager>\shell\wcm.psm1'
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned   # if scripts are disabled
+if (-not (Test-Path $PROFILE)) { New-Item -ItemType File -Path $PROFILE -Force | Out-Null }
+Add-Content $PROFILE "`r`nImport-Module <path to working-memory-manager>\shell\wcm.psm1"
 ```
 
-Open a new PowerShell and run `wcm now`. Without the module every command
-still works, except the automatic directory change.
+On a managed machine, Group Policy may override the execution policy.
 
-On macOS and Linux, install with `python3.14 -m pip install ./working-memory-manager`.
-There is no shell wrapper yet: `resume` prints the path instead of moving you
-there.
+Open a new PowerShell and run `wcm now`. The module finds the `wcm` command
+pip installed, or falls back to `py -3.14 -m wcm` when pip's `Scripts`
+directory is not on `PATH`. Without the module every command still works
+(as `py -3.14 -m wcm <command>` if `wcm` is not on `PATH`), except the
+automatic directory change.
+
+On macOS and Linux, install into a virtual environment or with `pipx`, since
+system and Homebrew Pythons refuse a plain `pip install`:
+
+```sh
+pipx install ./working-memory-manager
+# or
+python3.14 -m venv ~/.venvs/wcm && ~/.venvs/wcm/bin/pip install ./working-memory-manager
+```
+
+There is no shell wrapper for them yet: `resume` prints the path instead of
+moving you there.
 
 ## Commands
 
@@ -105,10 +121,10 @@ title: Payment retries
 type: feature
 status: paused
 priority: normal
-created: '2026-09-10T09:12:00-03:00'
-updated: '2026-09-16T16:40:00-03:00'
-last_resumed: '2026-09-16T14:12:00-03:00'
-last_paused: '2026-09-16T16:40:00-03:00'
+created: 2026-09-10T09:12:00-03:00
+updated: 2026-09-16T16:40:00-03:00
+last_resumed: 2026-09-16T14:12:00-03:00
+last_paused: 2026-09-16T16:40:00-03:00
 waiting_on: null
 tags:
 - payments
@@ -138,10 +154,15 @@ links: []
 The files are yours. When `wcm` rewrites an initiative it regenerates the
 frontmatter keys it knows, the title heading and the NOW block, and keeps:
 
-- frontmatter keys it does not know (`owner: ana`);
-- anything you write between the title and `## NOW`, and everything after the
-  NOW block (a `## Notes` section, for example);
+- frontmatter keys it does not know (`owner: ana`), with their values as you
+  wrote them: `9:30`, `0123` or `yes` stay text;
+- anything you write before `## NOW`, and everything after the NOW block (a
+  `## Notes` section, for example);
 - extra lines inside the NOW block, which count toward its size.
+
+The frontmatter is rewritten as YAML, so its comments and layout (flow lists
+like `[a, b]`, quoting) are not kept, only its keys and values. If a file has
+no `title`, the first `# ` heading becomes the title.
 
 It never repairs a file. If a file cannot be read, or its `id` or `status` is
 missing or wrong, `wcm now` names it with a `!` warning and commands that

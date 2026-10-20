@@ -1,3 +1,6 @@
+import os
+import shutil
+
 import pytest
 from conftest import checkpoints, load, path_of, write_initiative
 
@@ -134,8 +137,11 @@ def test_tags_focus_and_why(run, kb):
     assert init.now["Why it matters"] == "Because"
 
 
-def test_empty_title_is_refused(run):
-    assert run("new", "  ").code == 1
+def test_empty_title_is_a_usage_error(run, kb):
+    result = run("new", "  ")
+    assert result.code == 2
+    assert "title is required" in result.err
+    assert not kb.exists()
 
 
 # --- at most one active ----------------------------------------------------------
@@ -231,10 +237,20 @@ def test_resume_the_active_one_by_id(run, kb):
 def test_nothing_active_and_no_id(run, kb):
     write_initiative(kb, "INIT-0005", title="Security analysis")
     write_initiative(kb, "INIT-0007", title="Payment retries")
+    write_initiative(kb, "INIT-0003", status="waiting", waiting_on="{what: approval, owner: Ana}")
+    write_initiative(kb, "INIT-0002", status="done", location="done")
     result = run("resume")
     assert result.code == 1
-    assert "INIT-0005" in result.out
-    assert "INIT-0007" in result.out
+    assert "no initiative is active" in result.err
+    for listed in ("INIT-0003", "INIT-0005", "INIT-0007"):
+        assert listed in result.out
+    assert "INIT-0002" not in result.out
+
+
+def test_nothing_in_flight_suggests_new(run):
+    result = run("resume")
+    assert result.code == 1
+    assert "wcm new" in result.out
 
 
 # --- pause -----------------------------------------------------------------------
@@ -361,3 +377,82 @@ def test_no_active_for_commands_with_an_optional_id(run, kb, command):
     assert "no initiative is active" in result.err
     assert "wcm now" in result.err
     assert load(kb, "INIT-0007").meta == before
+
+
+@pytest.mark.parametrize("command", [["done"], ["pause", "-n", "x"]])
+def test_no_guess_among_several_active(run, kb, command):
+    write_initiative(kb, "INIT-0003", status="active")
+    write_initiative(kb, "INIT-0004", status="active")
+    before = {p: p.read_bytes() for p in kb.rglob("*") if p.is_file()}
+    result = run(*command)
+    assert result.code == 1
+    assert "INIT-0003/INIT-0003.md" in result.err
+    assert "INIT-0004/INIT-0004.md" in result.err
+    assert {p: p.read_bytes() for p in kb.rglob("*") if p.is_file()} == before
+    assert not (kb / "done").exists()
+
+
+# --- refusals leave every file as it was ---------------------------------------
+
+
+def test_refused_switch_on_resume_leaves_everything(run, kb):
+    run("new", "A")
+    run("new", "B", "--paused", "--next", "b")
+    before = {p: p.read_bytes() for p in kb.rglob("*") if p.is_file()}
+    result = run("resume", "2", tty=False)
+    assert result.code == 1
+    assert "next action is required" in result.err
+    assert "INIT-0001" in result.err
+    assert {p: p.read_bytes() for p in kb.rglob("*") if p.is_file()} == before
+
+
+def test_refusal_hints_name_the_right_flag(run, kb):
+    run("new", "A")
+    new = run("new", "B", tty=False)
+    assert new.code == 1
+    assert "--pause-next" in new.err
+    run("new", "C", "--paused", "--next", "c")
+    resume = run("resume", "2", tty=False)
+    assert resume.code == 1
+    assert 'wcm pause -n "<next action>"' in resume.err
+    pause = run("pause", tty=False)
+    assert 'use -n "<next action>"' in pause.err
+
+
+def test_switch_reports_the_checkpoint(run, kb):
+    run("new", "A", "--next", "a")
+    for argv, answers in ((("new", "B"), ["", "", ""]), (("resume", "1"), ["b", "", ""])):
+        out = run(*argv, answers=answers).out
+        assert "Checkpoint saved." in out
+        assert "Safe to switch context." in out
+
+
+def test_done_when_done_directory_exists(run, kb):
+    run("new", "A")
+    run("done")
+    copy = kb / "initiatives" / "INIT-0001"
+    shutil.copytree(kb / "done" / "INIT-0001", copy)
+    path = path_of(kb, "INIT-0001")
+    path.write_text(
+        path.read_text(encoding="utf-8").replace("status: done", "status: paused"), encoding="utf-8"
+    )
+    before = {p: p.read_bytes() for p in kb.rglob("*") if p.is_file()}
+    result = run("done", "1")
+    assert result.code == 1
+    assert "done/INIT-0001 already exists" in result.err
+    assert {p: p.read_bytes() for p in kb.rglob("*") if p.is_file()} == before
+
+
+def test_done_when_the_move_fails(run, kb, monkeypatch):
+    run("new", "A")
+    before = {p: p.read_bytes() for p in kb.rglob("*") if p.is_file()}
+
+    def busy(src, dst):
+        raise PermissionError(32, "The process cannot access the file")
+
+    monkeypatch.setattr(os, "rename", busy)
+    result = run("done")
+    assert result.code == 1
+    assert "Nothing was changed" in result.err
+    assert {p: p.read_bytes() for p in kb.rglob("*") if p.is_file()} == before
+    assert load(kb, "INIT-0001").status == "active"

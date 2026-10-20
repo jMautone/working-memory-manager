@@ -263,3 +263,75 @@ def test_brief_waiting_line(run, kb, fake_clock):
     )
     out = run("resume", "3").out
     assert "waiting for 3d on: approval (owner: Ana)" in out
+
+
+def test_enter_keeps_every_previous_value(run, kb):
+    run("new", "Payment retries")
+    run("pause", "-n", "N", "-s", "S", "-i", "I")
+    run("resume", "1")
+    out = run("pause", answers=["", "", ""]).out
+    assert "[N]" in out and "[S]" in out and "[I]" in out
+    assert {k: load(kb, "INIT-0001").now[k] for k in ("Next", "Stopped at", "Important")} == {
+        "Next": "N",
+        "Stopped at": "S",
+        "Important": "I",
+    }
+    run("resume", "1")
+    run("pause", answers=["New next", "", ""])
+    now = load(kb, "INIT-0001").now
+    assert (now["Next"], now["Stopped at"], now["Important"]) == ("New next", "S", "I")
+
+
+def test_checkpoint_sections_hold_the_right_fields(run, kb):
+    run("new", "Payment retries", "--focus", "F")
+    run("pause", "-n", "Next one", "-s", "Halfway", "-i", "Idempotency first")
+    lines = non_blank(checkpoints(kb, "INIT-0001")[0].read_text(encoding="utf-8"))
+    assert after(lines, "## Focus") == "F"
+    assert after(lines, "## Incomplete work") == "Halfway"
+    assert after(lines, "## Discoveries") == "Idempotency first"
+    assert after(lines, "## Next action") == "Next one"
+    assert after(lines, "## Completed since previous checkpoint") == "## Incomplete work"
+    assert after(lines, "## Open questions") == "## Next action"
+
+
+def test_brief_age_comes_from_last_paused(run, kb):
+    write_initiative(
+        kb,
+        "INIT-0007",
+        last_paused=(START - timedelta(days=2, hours=2)).isoformat(),
+        last_resumed=(START - timedelta(days=9)).isoformat(),
+    )
+    assert "paused 2d ago" in run("resume", "7").out
+
+
+def test_real_tty_detection(monkeypatch):
+    import io
+    import sys
+
+    from wcm import prompt
+
+    monkeypatch.setattr(sys, "stdin", io.StringIO(""))
+    assert prompt.stdin_is_tty() is False
+
+    class Terminal(io.StringIO):
+        def isatty(self):
+            return True
+
+    monkeypatch.setattr(sys, "stdin", Terminal(""))
+    assert prompt.stdin_is_tty() is True
+    monkeypatch.setattr(sys, "stdin", None)
+    assert prompt.stdin_is_tty() is False
+
+
+def test_piped_pause_with_the_real_tty_check(kb, fake_clock, hub, monkeypatch, capsys):
+    import io
+    import sys
+
+    from wcm import cli
+
+    assert cli.main(["new", "Payment retries", "--next", "Finish backoff"]) == 0
+    monkeypatch.setattr(sys, "stdin", io.StringIO(""))
+    assert cli.main(["pause"]) == 0
+    out = capsys.readouterr().out
+    assert "Next action" not in out
+    assert load(kb, "INIT-0001").status == "paused"

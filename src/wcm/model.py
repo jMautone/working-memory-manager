@@ -1,4 +1,4 @@
-"""The initiative file: parse, render and invariants. Pure: no filesystem, no clock.
+"""The initiative file: parse, render and invariants. No filesystem, no clock.
 
 An initiative file is YAML frontmatter, a `# <title>` heading, a `## NOW` block
 of five `**<Label>:** <value>` lines, and a free tail. Rendering regenerates
@@ -6,6 +6,7 @@ the known frontmatter keys, the title and the NOW block, and keeps everything
 else the person wrote.
 """
 
+import os.path
 import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, time
@@ -18,9 +19,67 @@ TYPES = ("feature", "bug", "incident", "research", "refactor", "other")
 NOW_LABELS = ("Focus", "Stopped at", "Why it matters", "Important", "Next")
 NOW_LIMIT = 15
 
+# Keys every initiative file carries, with the value written when one is missing.
+KNOWN_KEYS = {
+    "id": None,
+    "title": "",
+    "type": "other",
+    "status": None,
+    "priority": "normal",
+    "created": None,
+    "updated": None,
+    "last_resumed": None,
+    "last_paused": None,
+    "waiting_on": None,
+    "tags": [],
+    "workspaces": [],
+    "links": [],
+}
+
 _HEADING = re.compile(r"#{1,6}(\s|$)")
 _FIELD = re.compile(r"\*\*(" + "|".join(re.escape(label) for label in NOW_LABELS) + r"):\*\*(.*)")
 _NOW_HEADING = re.compile(r"##\s+NOW\s*")
+_TITLE = re.compile(r"#\s+(.*)")
+_BOOL_TAG = "tag:yaml.org,2002:bool"
+_NULL_TAG = "tag:yaml.org,2002:null"
+_TIMESTAMP_TAG = "tag:yaml.org,2002:timestamp"
+
+
+class _Loader(yaml.SafeLoader):
+    """Read every plain scalar as text, except null and true/false.
+
+    YAML 1.1 would turn a hand-written `9:30` into 570, `0123` into 83, `1.10`
+    into 1.1 and `yes` into True, and rewrite them that way. Keeping them as
+    text preserves what the person wrote; the tool only needs strings, lists,
+    null and booleans.
+    """
+
+
+_Loader.yaml_implicit_resolvers = {
+    first: [(tag, rx) for tag, rx in resolvers if tag == _NULL_TAG]
+    for first, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()
+}
+_Loader.add_implicit_resolver(
+    _BOOL_TAG, re.compile(r"^(?:true|True|TRUE|false|False|FALSE)$"), list("tTfF")
+)
+
+
+class _Dumper(yaml.SafeDumper):
+    """Write ISO timestamps plain, as people write them and Obsidian reads them."""
+
+
+def _represent_str(dumper: yaml.SafeDumper, value: str):
+    if dumper.resolve(yaml.ScalarNode, value, (True, False)) == _TIMESTAMP_TAG:
+        return dumper.represent_scalar(_TIMESTAMP_TAG, value)
+    return dumper.represent_str(value)
+
+
+def _represent_datetime(dumper: yaml.SafeDumper, value: datetime):
+    return dumper.represent_scalar(_TIMESTAMP_TAG, value.isoformat())
+
+
+_Dumper.add_representer(str, _represent_str)
+_Dumper.add_representer(datetime, _represent_datetime)
 
 
 class MalformedError(ValueError):
@@ -43,7 +102,7 @@ class Initiative:
     @property
     def title(self) -> str:
         value = self.meta.get("title")
-        return "" if value is None else str(value)
+        return "" if value is None else one_line(str(value))
 
     @property
     def status(self) -> str:
@@ -64,12 +123,13 @@ class Initiative:
 
     @property
     def primary_path(self) -> str | None:
+        """The path of the primary workspace, with `~` expanded, as recorded."""
         workspaces = self.meta.get("workspaces")
         if not isinstance(workspaces, list):
             return None
         for entry in workspaces:
             if isinstance(entry, dict) and entry.get("primary") is True and entry.get("path"):
-                return str(entry["path"])
+                return os.path.expanduser(str(entry["path"]))
         return None
 
     def set_time(self, key: str, value: datetime | None) -> None:
@@ -96,7 +156,7 @@ def parse_time(value) -> datetime | None:
 
 
 def one_line(text: str | None) -> str:
-    """NOW values are single lines."""
+    """NOW values and titles are single lines."""
     return " ".join((text or "").split())
 
 
@@ -133,15 +193,15 @@ def parse(text: str) -> Initiative:
     """Parse an initiative file, or raise MalformedError saying why."""
     text = text.removeprefix("﻿").replace("\r\n", "\n")
     lines = text.split("\n")
-    if not lines or lines[0].strip() != "---":
+    if not lines or lines[0].rstrip() != "---":
         raise MalformedError("the file does not start with a --- frontmatter line")
     try:
-        end = next(i for i in range(1, len(lines)) if lines[i].strip() == "---")
+        end = next(i for i in range(1, len(lines)) if lines[i].rstrip() == "---")
     except StopIteration:
         raise MalformedError("the frontmatter has no closing --- line") from None
     try:
-        meta = yaml.safe_load("\n".join(lines[1:end]))
-    except yaml.YAMLError as e:
+        meta = yaml.load("\n".join(lines[1:end]), Loader=_Loader)
+    except Exception as e:  # PyYAML raises more than YAMLError on bad values
         raise MalformedError(f"the frontmatter is not valid YAML ({_first_line(e)})") from None
     if not isinstance(meta, dict):
         raise MalformedError("the frontmatter is not a mapping")
@@ -153,32 +213,52 @@ def parse(text: str) -> Initiative:
         raise MalformedError(f"status {meta['status']!r} is not one of {', '.join(STATES)}")
 
     body = lines[end + 1 :]
-    i = 0
-    while i < len(body) and not body[i].strip():
-        i += 1
-    if i < len(body) and body[i].startswith("# "):
-        i += 1  # the title heading is regenerated from the frontmatter
-
-    start = i
-    now_at = next((j for j in range(start, len(body)) if _NOW_HEADING.fullmatch(body[j])), None)
-    init = Initiative(meta=meta)
+    now_at = next((j for j in range(len(body)) if _NOW_HEADING.fullmatch(body[j])), None)
+    # Everything before NOW (or before the first other heading, when there is no
+    # NOW) is the intro; the first `# ` line in it is the title heading.
     if now_at is None:
-        init.tail = _strip_blank_edges(body[start:])
+        intro_end = next(
+            (
+                j
+                for j in range(len(body))
+                if _HEADING.match(body[j]) and not _TITLE.fullmatch(body[j])
+            ),
+            len(body),
+        )
+    else:
+        intro_end = now_at
+    intro = body[:intro_end]
+    title_at = next((j for j, line in enumerate(intro) if _TITLE.fullmatch(line)), None)
+    if title_at is not None:
+        if not one_line(str(meta.get("title") or "")):
+            meta["title"] = one_line(_TITLE.fullmatch(intro[title_at]).group(1))
+        del intro[title_at]
+
+    init = Initiative(meta=meta, intro=_strip_blank_edges(intro))
+    if now_at is None:
+        init.tail = _strip_blank_edges(body[intro_end:])
         return init
 
-    init.intro = _strip_blank_edges(body[start:now_at])
     seen = set()
+    blank_before = False
     j = now_at + 1
     while j < len(body) and not _HEADING.match(body[j]):
         line = body[j].rstrip()
-        if line.strip():
-            init.now_lines += 1
-            m = _FIELD.fullmatch(line)
-            if m and m.group(1) not in seen:
-                seen.add(m.group(1))
-                init.now[m.group(1)] = one_line(m.group(2))
-            else:
-                init.now_extra.append(line)
+        if not line.strip():
+            blank_before = True
+            j += 1
+            continue
+        init.now_lines += 1
+        m = _FIELD.fullmatch(line)
+        if m and m.group(1) not in seen:
+            seen.add(m.group(1))
+            init.now[m.group(1)] = one_line(m.group(2))
+        else:
+            # Keep one blank line between extra lines, so their Markdown stays intact.
+            if blank_before and init.now_extra:
+                init.now_extra.append("")
+            init.now_extra.append(line)
+        blank_before = False
         j += 1
     init.tail = _strip_blank_edges(body[j:])
     return init
@@ -186,7 +266,18 @@ def parse(text: str) -> Initiative:
 
 def render(init: Initiative) -> str:
     """Render the file. Known keys keep their place; unknown keys pass through."""
-    front = yaml.safe_dump(init.meta, sort_keys=False, allow_unicode=True, default_flow_style=False)
+    meta = dict(init.meta)
+    for key, default in KNOWN_KEYS.items():
+        if key not in meta:
+            meta[key] = list(default) if isinstance(default, list) else default
+    front = yaml.dump(
+        meta,
+        Dumper=_Dumper,
+        sort_keys=False,
+        allow_unicode=True,
+        default_flow_style=False,
+        width=float("inf"),
+    )
     out = ["---", front.rstrip("\n"), "---", "", f"# {init.title}", ""]
     if init.intro:
         out += [init.intro, ""]
@@ -211,7 +302,8 @@ def _strip_blank_edges(lines: list[str]) -> str:
 
 
 def _first_line(error: Exception) -> str:
-    return str(error).strip().splitlines()[0] if str(error).strip() else type(error).__name__
+    text = str(error).strip()
+    return text.splitlines()[0] if text else type(error).__name__
 
 
 def invariant_problems(init: Initiative) -> list[str]:

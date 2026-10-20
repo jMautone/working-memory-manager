@@ -12,7 +12,6 @@ to the initiatives) is never read or written.
 """
 
 import os
-import shutil
 from dataclasses import dataclass
 from datetime import datetime, tzinfo
 from pathlib import Path
@@ -162,12 +161,27 @@ class Store:
             except FileExistsError:
                 existing.add(path.name)
 
+    def done_directory(self, initiative_id: str) -> Path:
+        return self.kb / "done" / initiative_id
+
     def move_to_done(self, entry: Entry) -> Entry:
-        target = self.kb / "done" / entry.directory.name
+        """Move the whole directory in one rename, or leave it where it was.
+
+        A plain rename, never a copy: on Windows a directory another program is
+        using cannot be renamed, and a copy-then-delete fallback would leave
+        half of it in each place.
+        """
+        target = self.done_directory(entry.directory.name)
         if target.exists():
             raise FileExistsError(f"{self.relative(target)} already exists")
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(entry.directory), str(target))
+        try:
+            os.rename(entry.directory, target)
+        except OSError as e:
+            raise OSError(
+                f"cannot move {self.relative(entry.directory)} to done/ ({e.strerror or e}); "
+                "is a shell or another program using it? Nothing was changed"
+            ) from None
         return Entry(entry.initiative, target / entry.path.name, "done")
 
 

@@ -8,44 +8,69 @@
 # Install: add this line to your $PROFILE
 #   Import-Module <repo>\shell\wcm.psm1
 
-# Resolved once, at import. The function below shadows the application of the
-# same name, which is the point.
-$script:WcmExe = Get-Command wcm -CommandType Application -ErrorAction SilentlyContinue |
-    Select-Object -First 1 -ExpandProperty Source
-$script:PyExe = Get-Command py -CommandType Application -ErrorAction SilentlyContinue |
-    Select-Object -First 1 -ExpandProperty Source
-$script:PyHasWcm = $null
+$script:WcmExe = $null
+$script:PyHasWcm = $false
+$script:InstallHint = 'wcm: error: the wcm CLI is not installed. Install it with: py -3.14 -m pip install <path to the working-memory-manager repository>'
 
-function Test-WcmPackage {
+function Resolve-WcmCli {
+    # Positive results are cached; a missing CLI is looked up again on every
+    # call, so installing it works without re-importing the module.
+    if ($script:WcmExe -and (Test-Path -LiteralPath $script:WcmExe)) { return $true }
+    $script:WcmExe = Get-Command wcm -CommandType Application -ErrorAction SilentlyContinue |
+        Select-Object -First 1 -ExpandProperty Source
+    if ($script:WcmExe) { return $true }
+    if ($script:PyHasWcm) { return $true }
     # Never a bare `python`: on Windows it may be the Microsoft Store alias.
-    if ($null -eq $script:PyHasWcm) {
-        & $script:PyExe -3.14 -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('wcm') else 1)" 2>$null
+    if (Get-Command py -CommandType Application -ErrorAction SilentlyContinue) {
+        & py -3.14 -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('wcm') else 1)" 2>$null
         $script:PyHasWcm = ($LASTEXITCODE -eq 0)
     }
     return $script:PyHasWcm
 }
 
+function ConvertTo-WcmArgument([object] $Value, [bool] $Legacy) {
+    # PowerShell parses `--tags a,b` as an array; the CLI expects the text.
+    if ($Value -is [array]) { $Value = ($Value | ForEach-Object { [string]$_ }) -join ',' }
+    $s = [string]$Value
+    # Windows PowerShell 5.1 drops empty arguments and passes embedded double
+    # quotes unescaped. Quote those arguments ourselves, Windows-style.
+    if ($Legacy -and ($s -eq '' -or $s -match '[\s"]')) {
+        $s = '"' + (($s -replace '(\\*)"', '$1$1\"') -replace '(\\+)$', '$1$1') + '"'
+    }
+    return $s
+}
+
 function wcm {
-    if (-not $script:WcmExe -and -not ($script:PyExe -and (Test-WcmPackage))) {
-        Write-Host "wcm: error: the wcm CLI is not installed. Install it with: py -3.14 -m pip install <path to the working-memory-manager repository>" -ForegroundColor Red
+    if (-not (Resolve-WcmCli)) {
+        Write-Host $script:InstallHint -ForegroundColor Red
         $global:LASTEXITCODE = 1
         return
     }
+
+    $legacy = -not (Test-Path Variable:PSNativeCommandArgumentPassing) -or
+        ($PSNativeCommandArgumentPassing -eq 'Legacy')
+    $argv = @(foreach ($a in $args) { ConvertTo-WcmArgument $a $legacy })
 
     $tmp = [System.IO.Path]::GetTempFileName()
     $previous = $env:WCM_CD_FILE
     $env:WCM_CD_FILE = $tmp
     $code = 1
     try {
-        if ($script:WcmExe) {
-            & $script:WcmExe @args
-        } else {
-            & $script:PyExe -3.14 -m wcm @args
+        try {
+            if ($script:WcmExe) {
+                & $script:WcmExe @argv
+            } else {
+                & py -3.14 -m wcm @argv
+            }
+            $code = $LASTEXITCODE
+        } catch [System.Management.Automation.CommandNotFoundException] {
+            $script:WcmExe = $null
+            Write-Host $script:InstallHint -ForegroundColor Red
+            $code = 1
         }
-        $code = $LASTEXITCODE
         # -Encoding UTF8: Windows PowerShell 5.1 reads a file without BOM as ANSI.
         $target = Get-Content -LiteralPath $tmp -Encoding UTF8 -TotalCount 1 -ErrorAction SilentlyContinue
-        if ($target -and (Test-Path -LiteralPath $target -PathType Container)) {
+        if ($code -eq 0 -and $target -and (Test-Path -LiteralPath $target -PathType Container)) {
             Set-Location -LiteralPath $target
         }
     } finally {
