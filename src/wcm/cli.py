@@ -14,7 +14,7 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime
 
-from wcm import clock, ids, model, prompt, render, shell
+from wcm import clock, editor, ids, model, note, prompt, render, shell
 from wcm.store import Entry, NotFound, Store
 
 OK, DOMAIN_ERROR, USAGE_ERROR = 0, 1, 2
@@ -102,6 +102,38 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("done", help="close an initiative (default: the active one)")
     p.add_argument("id", nargs="?", type=_id_arg, metavar="ID")
     p.set_defaults(handler=cmd_done)
+
+    p = sub.add_parser(
+        "note",
+        help="save a note, linked to the active initiative (edit <ID>: open one)",
+        description="Save a note in seconds; the text is its title. With no text, ask for "
+        "it. `wcm note edit <ID>` opens an existing note in the editor (VISUAL, then EDITOR).",
+    )
+    p.add_argument("text", nargs="*", help="the note, saved as its title")
+    p.add_argument("-t", "--tag", action="append", metavar="TAG", help="add a tag (repeat, or a,b)")
+    p.add_argument(
+        "-e", "--edit", action="store_true", help="open the note in the editor after saving it"
+    )
+    p.add_argument("--free", action="store_true", help="do not link it to the active initiative")
+    p.set_defaults(handler=cmd_note)
+
+    p = sub.add_parser("notes", help="find notes, newest first")
+    p.add_argument("terms", nargs="*", metavar="term", help="text each note must contain")
+    p.add_argument(
+        "-t",
+        "--tag",
+        action="append",
+        metavar="TAG",
+        help="only notes with this tag (repeat, or a,b)",
+    )
+    p.add_argument(
+        "-i",
+        "--initiative",
+        type=_id_arg,
+        metavar="ID",
+        help="only notes linked to this initiative",
+    )
+    p.set_defaults(handler=cmd_notes)
     return parser
 
 
@@ -387,6 +419,7 @@ def cmd_resume(args, ctx: Ctx) -> int:
                 status_before="active",
                 since_before=init.time("last_resumed"),
                 waiting_on={},
+                notes=_linked_notes(ctx, init.id),
             )
         )
         _go_to(ctx, init)
@@ -420,6 +453,7 @@ def cmd_resume(args, ctx: Ctx) -> int:
             status_before=status_before,
             since_before=since_before,
             waiting_on=waiting_on,
+            notes=_linked_notes(ctx, init.id),
         )
     )
     _go_to(ctx, init)
@@ -442,4 +476,113 @@ def cmd_done(args, ctx: Ctx) -> int:
     ctx.store.write_checkpoint(moved, ctx.now, "done")
     ctx.store.save(moved, ctx.now)
     ctx.say(f"{init.id} done: {init.title}")
+    return OK
+
+
+def _linked_notes(ctx: Ctx, initiative_id: str) -> tuple[int, str] | None:
+    """How many valid notes link to the initiative, and the title of the latest."""
+    entries, _ = ctx.store.scan_notes(note.prefilter([], [], initiative_id))
+    linked = [e.note for e in entries if e.note.initiative == initiative_id]
+    if not linked:
+        return None
+    return len(linked), render.notes_in_order(linked)[0].title
+
+
+def cmd_note(args, ctx: Ctx) -> int:
+    if args.text and args.text[0] == "edit":
+        return _edit_note(args, ctx)
+    if args.text:
+        title = model.one_line(" ".join(args.text))
+        if not title:
+            raise UsageError('a text is required: wcm note "<text>"')
+    elif prompt.stdin_is_tty():
+        title = model.one_line(prompt.line("Note", ctx.out))
+        if not title:
+            raise DomainError("the note is empty; nothing was saved")
+    else:
+        # Never from a pipe: Windows PowerShell 5.1 turns accents into `?` there.
+        raise UsageError('a text is required: wcm note "<text>", or run it in a terminal')
+    tags = note.normalize_tags(args.tag)
+
+    linked, actives = None, []
+    if not args.free:
+        actives = [e.initiative for e in _actives(ctx)]
+        if len(actives) == 1:
+            linked = actives[0]
+
+    note_id = ctx.store.next_note_id()
+    text = note.render_new(note_id, title, tags, linked.id if linked else None, ctx.now)
+    path = ctx.store.create_note(note_id, text)
+    if linked:
+        ctx.say(f"{note_id} saved, linked to {linked.id} {linked.title}.")
+    else:
+        ctx.say(f"{note_id} saved.")
+    if len(actives) > 1:
+        names = ", ".join(i.id for i in actives)
+        ctx.warn(f"More than one initiative is active ({names}); the note was not linked")
+    if args.edit:
+        return _open_in_editor(ctx, note_id, path)
+    return OK
+
+
+def _edit_note(args, ctx: Ctx) -> int:
+    rest = args.text[1:]
+    if args.tag or args.edit or args.free:
+        raise UsageError("edit takes only a note ID: wcm note edit <ID>")
+    if not rest:
+        raise UsageError("a note ID is required: wcm note edit <ID>")
+    quote = 'to save a note that starts with "edit", quote the whole text: wcm note "edit ..."'
+    if len(rest) > 1:
+        raise UsageError(f"edit takes one note ID; {quote}")
+    try:
+        note_id = ids.parse_note(rest[0])
+    except ids.InvalidId as e:
+        raise UsageError(f"{e}; {quote}") from None
+    return _open_in_editor(ctx, note_id, ctx.store.find_note_path(note_id))
+
+
+def _open_in_editor(ctx: Ctx, note_id: str, path) -> int:
+    """Open the note, wait, and record `updated` only when it changed and still reads."""
+    rel = ctx.store.relative(path)
+    before = path.read_bytes()
+    ctx.out.flush()
+    try:
+        code = editor.open(path)
+    except editor.EditorError as e:
+        raise DomainError(str(e)) from None
+    if code != 0:
+        raise DomainError(f"the editor exited with code {code}; {rel} is left as it is on disk")
+    after = path.read_bytes()
+    if after == before:
+        ctx.say(f"{note_id} unchanged.")
+        return OK
+    try:
+        text = after.decode("utf-8")
+        note.parse(text, note_id)
+    except UnicodeDecodeError:
+        raise model.MalformedError(f"{rel} is not UTF-8 text; it was left as saved") from None
+    except model.MalformedError as e:
+        raise model.MalformedError(f"{rel}: {e}; it was left as saved") from None
+    ctx.store.replace_note(path, note.touch_updated(text, clock.now()))
+    ctx.say(f"{note_id} updated.")
+    return OK
+
+
+def cmd_notes(args, ctx: Ctx) -> int:
+    tags = note.normalize_tags(args.tag)
+    if args.initiative and not ctx.store.exists(args.initiative):
+        raise NotFound(f"{args.initiative} was not found")
+    entries, problems = ctx.store.scan_notes(note.prefilter(args.terms, tags, args.initiative))
+    found = [e.note for e in entries if note.matches(e.note, args.terms, tags, args.initiative)]
+    width = shutil.get_terminal_size(fallback=(100, 24)).columns
+    ctx.out.write(
+        render.note_list(
+            found,
+            now=ctx.now,
+            width=width,
+            problems=[(ctx.store.relative(p.path), p.reason) for p in problems],
+            filtered=bool(args.terms or tags or args.initiative),
+            ellipsis=_ellipsis(ctx.out),
+        )
+    )
     return OK

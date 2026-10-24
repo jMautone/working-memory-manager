@@ -1,4 +1,4 @@
-"""What the person reads: `wcm now`, the resume brief, ages and warnings.
+"""What the person reads: `wcm now`, the resume brief, `wcm notes`, ages and warnings.
 
 Pure: every function takes the time, the terminal width and the facts it
 needs as arguments, and returns text.
@@ -8,6 +8,7 @@ import unicodedata
 from datetime import datetime, timedelta
 
 from wcm.model import NOW_LABELS, NOW_LIMIT, PRIORITIES, Initiative, invariant_problems
+from wcm.note import Note
 
 STALE_AFTER = timedelta(hours=4)
 ELLIPSIS = "…"
@@ -178,6 +179,7 @@ def brief(
     status_before: str,
     since_before: datetime | None,
     waiting_on: dict,
+    notes: tuple[int, str] | None = None,
 ) -> str:
     """What `wcm resume` prints: where it stopped and what comes next, no history."""
     lines = [f"{init.id} {init.title}"]
@@ -195,8 +197,13 @@ def brief(
         if value:
             lines.append(f"  {label + ':':<16}{value}")
     path = init.primary_path
+    if notes or path:
+        lines.append("")
+    if notes:
+        count, latest = notes
+        lines.append(f"  {'Notes:':<16}{count} (latest: {latest})")
     if path:
-        lines += ["", f"  {'Path:':<16}{path}"]
+        lines.append(f"  {'Path:':<16}{path}")
     return "\n".join(lines) + "\n"
 
 
@@ -207,4 +214,47 @@ def candidates(initiatives: list[Initiative]) -> str:
     lines = ["Resume one of these with: wcm resume <ID>", ""]
     for init in initiatives:
         lines.append(f"  {init.id:<9}  {init.status:<7}  {init.title}")
+    return "\n".join(lines) + "\n"
+
+
+def notes_in_order(notes: list[Note]) -> list[Note]:
+    """Most recently created first; same or no `created` by ID, highest first; no `created` last."""
+    return sorted(
+        notes,
+        key=lambda n: (n.created is None, _recent_first(n.created), -int(n.id.split("-")[1])),
+    )
+
+
+def note_list(
+    notes: list[Note],
+    *,
+    now: datetime,
+    width: int,
+    problems: list[tuple[str, str]],
+    filtered: bool,
+    ellipsis: str = ELLIPSIS,
+) -> str:
+    """The `wcm notes` screen: one line per note, then the files it could not read."""
+    ordered = notes_in_order(notes)
+    ages = {n.id: since(n.created, now) for n in ordered}
+    id_width = max((len(n.id) for n in ordered), default=0)
+    age_width = max((len(a) for a in ages.values()), default=0)
+    link_width = max((len(n.initiative) + 2 for n in ordered if n.initiative), default=0)
+    title_width = max((display_width(n.title) for n in ordered), default=0)
+    room = width - (2 + id_width + 2 + 2 + age_width + link_width)
+    title_width = max(10, min(title_width, room))
+
+    lines = []
+    for n in ordered:
+        title = pad(truncate(n.title, title_width, ellipsis), title_width)
+        link = f"  {n.initiative}" if n.initiative else ""
+        lines.append(f"  {n.id:<{id_width}}  {title}  {ages[n.id]:<{age_width}}{link}".rstrip())
+    if not ordered:
+        if filtered:
+            lines.append("No notes match.")
+        elif not problems:
+            lines.append('No notes yet. Save one with: wcm note "<text>"')
+    if ordered and problems:
+        lines.append("")
+    lines += [f"!  Could not read {path}: {reason}" for path, reason in problems]
     return "\n".join(lines) + "\n"
