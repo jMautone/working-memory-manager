@@ -1,0 +1,48 @@
+## 1. Base compartida
+
+- [x] 1.1 Extraer el loader, el dumper y el corte del frontmatter de `model.py` a `src/wcm/frontmatter.py` (`split`, `load`, `dump`), sin cambiar el comportamiento de las iniciativas (design D1); verificar que la suite actual pasa sin tocar ningún test
+- [x] 1.2 Sumar al dumper de `frontmatter.py` la regla de comillas dobles para strings que empiezan con `[[`; verificar con un test unitario que `dump({"initiative": "[[INIT-0007]]"})` escribe `initiative: "[[INIT-0007]]"` y que `load` lo devuelve igual
+- [x] 1.3 Sumar a `ids.py` `parse_note`, `format_note` y `NOTE_FILE` (`NOTE-0012`, `note-12`, `12`, sin distinguir mayúsculas; cualquier otra forma lanza `InvalidId`); verificar tests unitarios para cada forma válida, `twelve`, `0` y `INIT-0012`
+
+## 2. El archivo de nota (notes)
+
+- [x] 2.1 Implementar `src/wcm/note.py` con `Note`, `parse` (título desde `title` o desde el primer H1, `tags` como lista o string suelto, cada motivo de malformada de la spec) y `render_new` (orden de claves, `tags: []`, `capture: null`, H1, `\n` final, UTF-8); verificar tests unitarios para la nota mínima escrita a mano, el título desde el H1, `tags: infra`, sin frontmatter, YAML inválido, sin `id`, `id` distinto del nombre y sin título, y que `parse(render_new(...))` devuelve los mismos valores
+- [x] 2.2 Implementar `note.link_of` y `note.normalize_tags`; verificar tests unitarios para `[[INIT-0007]]`, `[[init-0007|alias]]`, `INIT-0007`, `payment retries` y `null`, y para `-t infra -t "db, Infra" -t "#gateway"` → `infra`, `db`, `gateway`
+- [x] 2.3 Implementar `note.matches` (términos con `casefold()` contra título, tags y body, cada término por su cuenta; tags exactos sin distinguir mayúsculas; iniciativa por ID canónico) y el prefiltro de D7; verificar tests unitarios para los escenarios de "Find notes" (una palabra, varios términos, tag, acentos significativos, término con espacios) y que el prefiltro nunca descarta una nota que `matches` acepta en esos casos
+- [x] 2.4 Implementar `note.touch_updated` por líneas (design D6); verificar tests unitarios con `updated:` presente, ausente, fin de línea `\r\n`, BOM, un comentario YAML y `tags: [infra, db]`, comprobando que fuera de la línea `updated:` el texto queda byte a byte
+
+## 3. Notas en el store (memory-store, notes)
+
+- [x] 3.1 Implementar en `store.py` `next_note_id`, `note_path`, `find_note_path` y `scan_notes(prefilter)` (solo `notes/NOTE-<dígitos>.md` directos; los demás archivos y subdirectorios se ignoran; los malformados vuelven como `Problem`); verificar tests para el primer ID sin `notes/`, el hueco (`NOTE-0003`, `NOTE-0007` → `NOTE-0008`), el malformado que cuenta, y el escenario "Other Markdown files in notes"
+- [x] 3.2 Implementar `create_note` (temporal, verificación de que el destino no existe, `os.replace`) y `replace_note` (escritura atómica); verificar tests de que no queda ningún `.tmp`, de que `create_note` sobre un archivo existente falla sin modificarlo, y del escenario "Notes under the hub" con un `WCM_HOME` que todavía no existe
+
+## 4. Guardar una nota (notes)
+
+- [x] 4.1 Agregar el subcomando `note` a `cli.py` (texto `nargs="*"`, `-t/--tag` repetible, `-e/--edit`, `--free`) y el handler que guarda sin abrir nada: título unido y en una línea, tags normalizados, texto en blanco → código 2, salida `<ID> saved.`; verificar tests para "Save without opening anything", "Options after the text", "Blank text refused", "File written on save" y "Repeated and comma-separated tags", y que `wcm note --help` lista las opciones
+- [x] 4.2 Implementar el vínculo con la activa: `initiative: "[[<ID>]]"` y la salida `saved, linked to <ID> <título>.`; `--free` o sin activa → `null`; más de una activa → nota suelta, línea `!` con las activas y código 0; ningún archivo de iniciativa cambia; verificar tests para "Linked to the active initiative" (con `INIT-0007.md` byte a byte igual), "Linked note frontmatter", "Free note" y "Two active initiatives on disk"
+- [x] 4.3 Implementar `prompt.line` y su uso en `note` sin texto: con terminal pide `Note`; respuesta vacía → nada guardado y código 1; sin terminal → código 2 sin leer stdin; verificar tests con el `run(..., answers=...)` de `conftest.py` para "Text typed at the prompt", "Empty answer saves nothing" y "No text and no terminal"
+
+## 5. Editar una nota (notes)
+
+- [x] 5.1 Implementar `src/wcm/editor.py` (`command`, `split`, `open`) con las formas de Windows y de macOS/Linux de design D4; verificar tests unitarios de `command()` (VISUAL gana, VISUAL en blanco cae a EDITOR, default `notepad` con `sys.platform` en `win32` y `vi` en otro caso), de `split` (`code --wait`, ruta entre comillas con espacios en las dos formas) y de `EditorError` con un programa inexistente
+- [x] 5.2 Crear `tests/fake_editor.py` (agrega `WCM_TEST_EDIT`, sale con `WCM_TEST_EXIT`, o no toca nada) e implementar `wcm note edit <ID>` y `wcm note -e`: forma `edit` solo como primer argumento, exactamente un ID, sin `-t`/`-e`/`--free`, apertura aunque la nota esté malformada, `updated.`/`unchanged.`, editor que no arranca o que sale con error → código 1 y la nota de `-e` sigue guardada; verificar tests con `EDITOR` = `"<sys.executable>" "<fake_editor.py>"` para cada escenario de "Edit a note" y "Editor selection" que no depende del OS, y "Short forms accepted" e "Invalid note ID" de "Note IDs"
+- [x] 5.3 Conectar `touch_updated` y `replace_note` después del editor (design D6): sin cambios no escribe; cambios válidos actualizan solo `updated`; cambios que rompen la nota → código 1 con la ruta y el motivo, sin escribir; verificar tests para "Edit refreshes updated", "Hand formatting preserved" y "Edit breaks the note"
+
+## 6. Encontrar notas (notes)
+
+- [x] 6.1 Implementar `render.note_list` (una línea por nota, título truncado por columnas, edad con `render.age` o `?`, iniciativa si está vinculada, líneas `!` de malformadas al final) y el orden de D7; verificar tests unitarios para "Linked note line", "Free note line", "Long title is shortened" a 80 columnas, y el orden con `created` iguales y ausentes
+- [x] 6.2 Agregar el subcomando `notes` (términos, `-t` repetible, `-i` con `_id_arg`) con el prefiltro, el filtro exacto y las salidas "no notes match" y "No notes yet ... wcm note"; `-i` de una iniciativa que no existe en `initiatives/` ni en `done/` → código 1; verificar tests para cada escenario de "Find notes", "Note links are read from the initiative field", "Minimal hand-written note", "Broken note during a search" y "Name and id disagree", y que las mtimes del store no cambian después de `wcm notes`
+
+## 7. Las notas en el brief (initiative-context)
+
+- [x] 7.1 Sumar a `cmd_resume` el conteo de notas vinculadas con el prefiltro por ID y la última por `created`, y a `render.brief` la línea `Notes:` entre NOW y `Path:`, también en `resume` sin ID; verificar tests para "Brief with linked notes", "No linked notes", "Notes shown when resuming the active one again" (sin escrituras), "Free and malformed notes are not counted" y "Closing an initiative leaves its notes in place"
+
+## 8. Documentación, verificación manual e integración
+
+- [x] 8.1 Actualizar `README.md` en inglés: sección de notas (`note`, `-t`, `-e`, `--free`, `note edit`, `notes` con términos, `-t` e `-i`), el formato de `notes/NOTE-0012.md`, el editor (`VISUAL`, `EDITOR`, defaults por OS, `code --wait`), por qué conviene el prompt de `wcm note` en Windows PowerShell 5.1, y la línea `Notes:` del brief; verificar que cada ejemplo del README corre tal cual contra un `WCM_HOME` temporal
+- [ ] 8.2 [manual] En una sesión nueva de Windows PowerShell 5.1 con el módulo importado: `wcm note` sin texto pide la línea y acepta `#` y `;`; `wcm note "x" -t infra,db` guarda los dos tags; `wcm note -e "x"` abre `notepad` y espera; con `$env:EDITOR = "code --wait"`, `wcm note edit <ID>` abre VS Code y espera; `wcm notes` con un título con acentos se ve bien en la consola; verificar cada punto y anotar el resultado debajo de esta tarea
+  - Pendiente: no se verificó todavía; el apply corrió en macOS. Las pruebas automáticas cubren el prompt, los tags con coma y el editor (con un editor falso), pero no PowerShell 5.1, `notepad`, `code --wait` ni la consola de Windows.
+- [ ] 8.3 [manual] Sembrar un `WCM_HOME` temporal con 1000 notas y medir en Windows con `Measure-Command` `wcm note "x"`, `wcm notes` y `wcm notes gateway`; verificar que la mediana de cinco corridas de `wcm note` queda bajo 300 ms y la de `wcm notes` bajo 500 ms, o aplicar `CSafeLoader` (design, Risks) y volver a medir; anotar las cifras debajo de esta tarea
+  - Pendiente: falta medir en Windows. Referencia en macOS (Python 3.14, 1000 notas, mediana de 5): `wcm note "x"` 44 ms, `wcm notes` 225 ms, `wcm notes gateway` 74 ms. Esta instalación de PyYAML trae libyaml (`yaml.__with_libyaml__` en `True`), pero todavía no se usa `CSafeLoader`.
+- [ ] 8.4 Sumar las líneas del change bajo `## [Unreleased]` en `CHANGELOG.md` (Added: `wcm note`, `note edit` y `notes`, las notas en `kbs/work/notes/`, la línea `Notes:` del brief), correr los checks de `CLAUDE.md` (`ruff check`, `ruff format --check`, `pytest tools`, `pytest`, `openspec validate --all --strict`), `git fetch origin`, validar el título con `python tools/relcheck.py pr --branch v0.1/add-notes --title "feat(add-notes): add wcm note, note edit and notes [v0.1.0-alpha.2]"` y abrir el pull request con ese título; verificar que relcheck imprime la alpha que publica y que el CI pasa en los tres OS
+  - Hecho: CHANGELOG, los checks en macOS (ruff, `pytest tools`, `pytest`, `openspec validate --all --strict`) y relcheck (`ok: publishes v0.1.0-alpha.2`). Pendiente: que el CI pase en los tres OS.
