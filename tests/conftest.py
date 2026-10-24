@@ -174,5 +174,5 @@ created: {created}
 
 # {title}
 {body}"""
-    path.write_text(text, encoding="utf-8")
+    path.write_text(text, encoding="utf-8", newline="")  # exactly these bytes, on any OS
     return path
