@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wcm"
+# Placeholder: the release workflow stamps the version from the pull request
+# title (tools/relcheck.py stamp). See CONTRIBUTING.md, Releases.
+version = "0.0.0.dev0"
+description = "Working memory layer: pause, see and resume initiatives in under 30 seconds."
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = ["pyyaml>=6.0.2"]
+
+[project.optional-dependencies]
+# Same versions as .github/workflows/ci.yml.
+dev = ["pytest==9.1.1", "ruff==0.16.10"]
+
+[project.scripts]
+wcm = "wcm.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
