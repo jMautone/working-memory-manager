@@ -143,3 +143,36 @@ links: []
         encoding="utf-8",
     )
     return path
+
+
+def note_path(kb: Path, note_id: str) -> Path:
+    return kb / "notes" / f"{note_id}.md"
+
+
+def write_note(
+    kb: Path,
+    note_id: str,
+    *,
+    title: str = "Hand written",
+    tags: str = "[]",
+    initiative: str = "null",
+    created: str = "2026-09-01T09:00:00-03:00",
+    body: str = "",
+    text: str | None = None,
+) -> Path:
+    """Write a note file the way a person (or Obsidian) would."""
+    path = note_path(kb, note_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if text is None:
+        text = f"""---
+id: {note_id}
+title: {title}
+tags: {tags}
+initiative: {initiative}
+created: {created}
+---
+
+# {title}
+{body}"""
+    path.write_text(text, encoding="utf-8", newline="")  # exactly these bytes, on any OS
+    return path

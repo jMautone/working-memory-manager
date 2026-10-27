@@ -26,3 +26,16 @@ a pre-release of it; see [CONTRIBUTING.md](CONTRIBUTING.md).
   openable as an Obsidian vault.
 - `shell/wcm.psm1`: a PowerShell module whose `wcm` function lets `resume`
   and `new` change the shell's directory through `WCM_CD_FILE`.
+- `wcm note`: save a note in seconds, with the text as its title, linked to
+  the active initiative (`--free` to skip the link), with tags (`-t`); with
+  no text it asks for one line. `-e` opens it in the editor afterwards.
+- `wcm note edit <ID>`: open a note in `VISUAL`, `EDITOR` or the OS default
+  (`notepad` on Windows, `vi` elsewhere); after an edit only `updated`
+  changes.
+- `wcm notes`: find notes by text, tag (`-t`) or initiative (`-i`), newest
+  first, one line each.
+- Notes as plain Markdown files in `kbs/work/notes/NOTE-0012.md`, linked to
+  their initiative with `initiative: "[[INIT-0007]]"`; notes written by hand
+  in Obsidian are read too.
+- The `wcm resume` brief shows `Notes:` with how many notes link to the
+  initiative and the latest one.

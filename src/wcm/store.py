@@ -6,17 +6,19 @@ Every effect on the store lives here. Layout under the hub (`WCM_HOME`, or
     kbs/work/initiatives/<ID>/<ID>.md
     kbs/work/initiatives/<ID>/checkpoints/<timestamp>.md
     kbs/work/done/<ID>/...
+    kbs/work/notes/<NOTE-ID>.md
 
-Anything else in the knowledge base (`.obsidian/`, notes a person keeps next
-to the initiatives) is never read or written.
+Anything else in the knowledge base (`.obsidian/`, other files a person keeps
+next to the initiatives or the notes) is never read or written.
 """
 
 import os
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, tzinfo
 from pathlib import Path
 
-from wcm import checkpoint, ids, model
+from wcm import checkpoint, ids, model, note
 
 LOCATIONS = ("initiatives", "done")
 
@@ -46,6 +48,14 @@ class Entry:
         return self.path.parent
 
 
+@dataclass
+class NoteEntry:
+    """A note and its file."""
+
+    note: note.Note
+    path: Path
+
+
 def hub() -> Path:
     override = os.environ.get("WCM_HOME", "").strip()
     return Path(override).expanduser() if override else Path.home() / ".wcm"
@@ -55,6 +65,7 @@ class Store:
     def __init__(self, root: Path | None = None):
         self.root = root if root is not None else hub()
         self.kb = self.root / "kbs" / "work"
+        self.notes = self.kb / "notes"
 
     def relative(self, path: Path) -> str:
         """A path inside the knowledge base, for messages, with forward slashes."""
@@ -119,6 +130,10 @@ class Store:
                         highest = max(highest, int(m.group(1)))
         return ids.format_id(highest + 1)
 
+    def exists(self, initiative_id: str) -> bool:
+        """Whether the initiative has a directory, in flight or done, readable or not."""
+        return any((self.kb / location / initiative_id).is_dir() for location in LOCATIONS)
+
     def latest_checkpoint(self, entry: Entry, tz: tzinfo) -> datetime | None:
         names = self._checkpoint_names(entry.directory)
         times = [t for t in (checkpoint.time_of(n, tz) for n in names) if t]
@@ -133,6 +148,50 @@ class Store:
         if not base.is_dir():
             return set()
         return {p.name for p in base.iterdir() if checkpoint.is_checkpoint(p.name)}
+
+    # --- notes ---------------------------------------------------------------
+
+    def _note_files(self):
+        """Files directly in notes/ named `NOTE-<digits>.md`; anything else is not a note."""
+        if not self.notes.is_dir():
+            return
+        for p in sorted(self.notes.iterdir()):
+            if ids.NOTE_FILE.fullmatch(p.name) and p.is_file():
+                yield p
+
+    def next_note_id(self) -> str:
+        """One more than the highest note file name, read from names only."""
+        numbers = (int(ids.NOTE_FILE.fullmatch(p.name).group(1)) for p in self._note_files())
+        return ids.format_note(max(numbers, default=0) + 1)
+
+    def note_path(self, note_id: str) -> Path:
+        return self.notes / f"{note_id}.md"
+
+    def find_note_path(self, note_id: str) -> Path:
+        """The file of a note, without reading it: a malformed note can still be opened."""
+        path = self.note_path(note_id)
+        if not path.is_file():
+            raise NotFound(f"{note_id} was not found")
+        return path
+
+    def scan_notes(
+        self, prefilter: Callable[[str], bool] | None = None
+    ) -> tuple[list[NoteEntry], list[Problem]]:
+        """The notes, parsed. With `prefilter`, only files whose casefolded text passes it."""
+        entries, problems = [], []
+        for path in self._note_files():
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as e:
+                problems.append(Problem(path, f"cannot be read ({e})"))
+                continue
+            if prefilter is not None and not prefilter(text.casefold()):
+                continue
+            try:
+                entries.append(NoteEntry(note.parse(text, path.name.removesuffix(".md")), path))
+            except model.MalformedError as e:
+                problems.append(Problem(path, str(e)))
+        return entries, problems
 
     # --- writing -----------------------------------------------------------
 
@@ -160,6 +219,25 @@ class Store:
                 return path
             except FileExistsError:
                 existing.add(path.name)
+
+    def create_note(self, note_id: str, text: str) -> Path:
+        """Write a new note in full, never over an existing file."""
+        path = self.note_path(note_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".tmp")
+        try:
+            with tmp.open("w", encoding="utf-8", newline="\n") as f:
+                f.write(text)
+            if path.exists():
+                raise FileExistsError(f"{self.relative(path)} already exists; nothing was saved")
+            os.replace(tmp, path)
+        finally:
+            if tmp.exists():
+                tmp.unlink()
+        return path
+
+    def replace_note(self, path: Path, text: str) -> None:
+        _write_atomic(path, text)
 
     def done_directory(self, initiative_id: str) -> Path:
         return self.kb / "done" / initiative_id

@@ -1,4 +1,4 @@
-"""The interactive part of the pause flow. Tests replace `stdin_is_tty` and `input`."""
+"""The interactive prompts of pause and note. Tests replace `stdin_is_tty` and `input`."""
 
 import sys
 
@@ -25,3 +25,9 @@ def ask(label: str, previous: str, out) -> str | None:
     if answer == CLEAR:
         return None
     return answer
+
+
+def line(label: str, out) -> str:
+    """Show `label` and read one line, as typed: the CLI reads it, not the shell."""
+    print(label, file=out)
+    return input("> ")
